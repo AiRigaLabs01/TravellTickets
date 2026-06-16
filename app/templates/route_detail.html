@@ -7,14 +7,9 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<nav class="navbar">
-  <a class="brand" href="/">✈️ TravellTickets</a>
-</nav>
-
+<nav class="navbar"><a class="brand" href="/">✈️ TravellTickets</a></nav>
 <div class="container">
-  <div style="margin-bottom:16px">
-    <a class="back-link" href="/">← Все маршруты</a>
-  </div>
+  <div style="margin-bottom:16px"><a class="back-link" href="/">← Все маршруты</a></div>
 
   <div class="page-header">
     <div>
@@ -31,143 +26,74 @@
     </div>
   </div>
 
-  {% if route.last_error %}
-  <div class="alert alert-error">⚠️ Последняя ошибка: {{ route.last_error }}</div>
-  {% endif %}
+  {% if route.last_error %}<div class="alert alert-error">⚠️ Последняя ошибка: {{ route.last_error }}</div>{% endif %}
 
-  <!-- Stats strip -->
   <div class="stats-strip">
     <div class="stat-item">
       <div class="stat-label">Статус</div>
-      {% if route.is_active %}
-        <span class="badge badge-active">активен</span>
-      {% else %}
-        <span class="badge badge-inactive">остановлен</span>
-      {% endif %}
+      {% if route.is_active %}<span class="badge badge-active">активен</span>{% else %}<span class="badge badge-inactive">остановлен</span>{% endif %}
     </div>
-    <div class="stat-item">
-      <div class="stat-label">Максимальная цена</div>
-      <div style="font-weight:700">{{ route.max_price | fmt_price }}</div>
-    </div>
+    <div class="stat-item"><div class="stat-label">Максимальная цена</div><div style="font-weight:700">{{ route.max_price | fmt_price }}</div></div>
     <div class="stat-item">
       <div class="stat-label">Лучшая найденная цена</div>
-      {% if route.last_best_price %}
+      {% if checks and route.last_best_price %}
         <div class="price-big" style="font-size:20px">{{ route.last_best_price | fmt_price }}</div>
+      {% elif route.last_checked_at %}
+        <div class="price-na">подходящих билетов нет</div>
       {% else %}
         <div class="price-na">нет данных</div>
       {% endif %}
     </div>
-    <div class="stat-item">
-      <div class="stat-label">Последняя проверка</div>
-      <div>{{ route.last_checked_at | fmt_dt }}</div>
-    </div>
-    <div class="stat-item">
-      <div class="stat-label">Прямые рейсы</div>
-      <div>{{ "Только прямые" if route.direct_only else "Все рейсы" }}</div>
-    </div>
+    <div class="stat-item"><div class="stat-label">Последняя проверка</div><div>{{ route.last_checked_at | fmt_dt }}</div></div>
+    <div class="stat-item"><div class="stat-label">Прямые рейсы</div><div>{{ "Только прямые" if route.direct_only else "Все рейсы" }}</div></div>
   </div>
 
-  <!-- Active filters summary -->
   {% set has_filters = route.airline_codes or route.destination_airports or route.departure_time_from or route.arrival_time_from %}
   {% if has_filters %}
   <div class="card" style="margin-bottom:18px">
     <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:8px">Активные фильтры</div>
     <div class="filters-summary">
-      {% if route.destination_airports %}
-        <span style="font-size:12px;color:var(--muted);margin-right:2px">Аэропорты прилёта:</span>
-        {% for ap in route.destination_airports.split(',') %}
-          <span class="tag">{{ airport_label(ap.strip()) }}</span>
-        {% endfor %}
-      {% endif %}
-      {% if route.airline_codes %}
-        <span style="font-size:12px;color:var(--muted);margin-right:2px;margin-left:8px">Авиакомпании:</span>
-        {% for al in route.airline_codes.split(',') %}
-          <span class="tag tag-airline">{{ airline_label(al.strip()) }}</span>
-        {% endfor %}
-      {% endif %}
-      {% if route.departure_time_from or route.departure_time_to %}
-        <span class="tag">✈ вылет {{ route.departure_time_from or "—" }} – {{ route.departure_time_to or "—" }}</span>
-      {% endif %}
-      {% if route.arrival_time_from or route.arrival_time_to %}
-        <span class="tag">🛬 прилёт {{ route.arrival_time_from or "—" }} – {{ route.arrival_time_to or "—" }} (расч.)</span>
-      {% endif %}
+      {% if route.destination_airports %}<span style="font-size:12px;color:var(--muted);margin-right:2px">Аэропорты прилёта:</span>{% for ap in route.destination_airports.split(',') %}<span class="tag">{{ airport_label(ap.strip()) }}</span>{% endfor %}{% endif %}
+      {% if route.airline_codes %}<span style="font-size:12px;color:var(--muted);margin-right:2px;margin-left:8px">Авиакомпании:</span>{% for al in route.airline_codes.split(',') %}<span class="tag tag-airline">{{ airline_label(al.strip()) }}</span>{% endfor %}{% endif %}
+      {% if route.departure_time_from or route.departure_time_to %}<span class="tag">✈ вылет {{ route.departure_time_from or "—" }} – {{ route.departure_time_to or "—" }}</span>{% endif %}
+      {% if route.arrival_time_from or route.arrival_time_to %}<span class="tag">🛬 прилёт {{ route.arrival_time_from or "—" }} – {{ route.arrival_time_to or "—" }} (расч.)</span>{% endif %}
     </div>
   </div>
   {% endif %}
 
   <h2 style="font-size:16px;font-weight:700;margin-bottom:12px">История проверок</h2>
-
   {% if checks %}
-  <div class="table-wrap" style="margin-bottom:6px">
-    <table>
-      <thead>
-        <tr>
-          <th>Проверено</th>
-          <th>Цена</th>
-          <th>Рейс</th>
-          <th>Авиакомпания</th>
-          <th>Продавец</th>
-          <th>Аэропорты</th>
-          <th>Вылет</th>
-          <th>Прилёт</th>
-          <th>Пересадки</th>
-          <th>Ссылки</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for c in checks %}
-        <tr>
-          <td style="white-space:nowrap">{{ c.checked_at | fmt_dt }}</td>
-          <td><strong style="color:var(--success)">{{ c.price | fmt_price }}</strong></td>
-          <td style="white-space:nowrap">{{ c.airline }} {{ c.flight_number }}</td>
-          <td>{{ airline_label(c.airline or '') }}</td>
-          <td>{{ c.gate or "—" }}</td>
-          <td style="white-space:nowrap">{{ c.origin_airport or "?" }} → {{ c.destination_airport or "?" }}</td>
-          <td style="white-space:nowrap">{{ c.departure_at | fmt_time }}</td>
-          <td style="white-space:nowrap">
-            {{ c.estimated_arrival_at | fmt_time }}
-            {% if c.is_estimated_arrival %}
-              <span title="Рассчитано по длительности рейса" style="color:var(--muted)">~</span>
-            {% endif %}
-          </td>
-          <td>{{ "нет" if c.transfers == 0 else c.transfers }}</td>
-          <td style="white-space:nowrap">
-            {% if c.aviasales_url %}<a href="{{ c.aviasales_url }}" target="_blank">Aviasales</a>{% endif %}
-            {% if c.yandex_travel_url %} · <a href="{{ c.yandex_travel_url }}" target="_blank">Яндекс</a>{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  <p style="font-size:11px;color:var(--muted);margin-bottom:20px">~ = время прилёта рассчитано как вылет + длительность рейса (API не отдаёт реальное время прилёта)</p>
+  <div class="table-wrap" style="margin-bottom:6px"><table>
+    <thead><tr><th>Проверено</th><th>Цена</th><th>Рейс</th><th>Авиакомпания</th><th>Продавец</th><th>Аэропорты</th><th>Вылет</th><th>Прилёт</th><th>Пересадки</th><th>Ссылки</th></tr></thead>
+    <tbody>{% for c in checks %}<tr>
+      <td style="white-space:nowrap">{{ c.checked_at | fmt_dt }}</td>
+      <td><strong style="color:var(--success)">{{ c.price | fmt_price }}</strong></td>
+      <td style="white-space:nowrap">{{ c.airline }} {{ c.flight_number }}</td>
+      <td>{{ airline_label(c.airline or '') }}</td>
+      <td>{{ c.gate or "—" }}</td>
+      <td style="white-space:nowrap">{{ c.origin_airport or "?" }} → {{ c.destination_airport or "?" }}</td>
+      <td style="white-space:nowrap">{{ c.departure_at | fmt_time }}</td>
+      <td style="white-space:nowrap">{{ c.estimated_arrival_at | fmt_time }}{% if c.is_estimated_arrival %}<span title="Рассчитано по длительности рейса" style="color:var(--muted)">~</span>{% endif %}</td>
+      <td>{{ "нет" if c.transfers == 0 else c.transfers }}</td>
+      <td style="white-space:nowrap">{% if c.aviasales_url %}<a href="{{ c.aviasales_url }}" target="_blank">Aviasales</a>{% endif %}{% if c.yandex_travel_url %} · <a href="{{ c.yandex_travel_url }}" target="_blank">Яндекс</a>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  <p style="font-size:11px;color:var(--muted);margin-bottom:20px">~ = время прилёта рассчитано как вылет + длительность рейса.</p>
   {% else %}
-    <div class="card" style="text-align:center;padding:32px;color:var(--muted)">
-      Проверок ещё не было. Нажмите «Проверить сейчас» для первой проверки.
-    </div>
+  <div class="card" style="text-align:center;padding:32px;color:var(--muted)">
+    {% if route.last_checked_at %}Проверка была выполнена, но подходящих билетов по текущим условиям не найдено. Попробуйте увеличить максимальную цену или ослабить фильтры.{% else %}Проверок ещё не было. Нажмите «Проверить сейчас» для первой проверки.{% endif %}
+  </div>
   {% endif %}
 
   {% if notifications %}
   <h2 style="font-size:16px;font-weight:700;margin:20px 0 12px">Отправленные уведомления</h2>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Отправлено</th><th>Канал</th><th>Сообщение</th></tr></thead>
-      <tbody>
-        {% for n in notifications %}
-        <tr>
-          <td style="white-space:nowrap">{{ n.sent_at | fmt_dt }}</td>
-          <td>{{ n.channel }}</td>
-          <td style="max-width:380px;white-space:pre-line;font-size:12px">{{ n.message }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Отправлено</th><th>Канал</th><th>Сообщение</th></tr></thead>
+    <tbody>{% for n in notifications %}<tr><td style="white-space:nowrap">{{ n.sent_at | fmt_dt }}</td><td>{{ n.channel }}</td><td style="max-width:380px;white-space:pre-line;font-size:12px">{{ n.message }}</td></tr>{% endfor %}</tbody>
+  </table></div>
   {% endif %}
 
-  <div class="disclaimer" style="margin-top:20px">
-    ⚠️ Цены из кэша Aviasales. Перед покупкой всегда уточняйте актуальную цену и наличие билета у продавца.
-  </div>
+  <div class="disclaimer" style="margin-top:20px">⚠️ Цены из кэша Aviasales. Перед покупкой всегда уточняйте актуальную цену и наличие билета у продавца.</div>
 </div>
 </body>
 </html>
