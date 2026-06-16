@@ -8,9 +8,10 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 
+from app.city_codes import city_label
 from app.config import TELEGRAM_BOT_TOKEN, APP_BASE_URL
 from app.database import SessionLocal
-from app.models import TrackedRoute
+from app.models import PriceCheck, TrackedRoute
 from app.scheduler import check_route, schedule_route
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,55 @@ def main_menu() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         input_field_placeholder="Выберите действие",
     )
+
+
+def _fmt_price(value) -> str:
+    if value is None:
+        return "нет данных"
+    return f"{int(value):,}".replace(",", " ") + " ₽"
+
+
+def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> str:
+    origin = city_label(route.origin)
+    destination = city_label(route.destination)
+    filters = []
+    if route.direct_only:
+        filters.append("только прямые")
+    if route.destination_airports:
+        filters.append(f"аэропорты: {route.destination_airports}")
+    if route.airline_codes:
+        filters.append(f"авиакомпании: {route.airline_codes}")
+    filter_text = ", ".join(filters) if filters else "без доп. фильтров"
+
+    lines = [
+        f"🛫 <b>{origin} → {destination}</b>",
+        f"📅 {route.departure_date}",
+        f"💰 До {_fmt_price(route.max_price)}",
+        f"⏱ Проверка: каждые {route.interval_minutes} минут",
+        f"🎯 Фильтры: {filter_text}",
+    ]
+
+    if last_check:
+        dep = last_check.departure_at.strftime("%H:%M") if last_check.departure_at else "—"
+        arr = last_check.estimated_arrival_at.strftime("%H:%M") if last_check.estimated_arrival_at else "—"
+        lines.extend([
+            "",
+            "<b>Последняя проверка</b>",
+            f"💵 Цена: {_fmt_price(last_check.price)}",
+            f"✈️ Рейс: {last_check.airline or '—'} {last_check.flight_number or ''}".strip(),
+            f"🛬 Аэропорт: {last_check.origin_airport or route.origin} → {last_check.destination_airport or route.destination}",
+            f"🕓 Вылет: {dep}",
+            f"🕕 Прилёт: {arr}, рассчитано",
+            f"🏷 Продавец: {last_check.gate or '—'}",
+        ])
+    else:
+        lines.extend(["", "<b>Последняя проверка</b>", "Пока нет данных"])
+
+    lines.append("")
+    lines.append(f"Открыть маршрут: {APP_BASE_URL}/route/{route.id}")
+    lines.append(f"Изменить фильтры: {APP_BASE_URL}/route/{route.id}/edit")
+    lines.append(f"Остановить: /stop {route.id}")
+    return "\n".join(lines)
 
 
 class NewRouteStates(StatesGroup):
@@ -78,10 +128,7 @@ def _register_handlers(dp: Dispatcher):
     @dp.message(F.text == "➕ Новый мониторинг")
     async def cmd_new(message: Message, state: FSMContext):
         await state.set_state(NewRouteStates.origin)
-        await message.answer(
-            "Введите код аэропорта вылета (например: <b>SVX</b>):",
-            parse_mode="HTML",
-        )
+        await message.answer("Введите код аэропорта вылета (например: <b>SVX</b>):", parse_mode="HTML")
 
     @dp.message(NewRouteStates.origin)
     async def process_origin(message: Message, state: FSMContext):
@@ -145,7 +192,7 @@ def _register_handlers(dp: Dispatcher):
                 interval_minutes=data["interval_minutes"],
                 direct_only=direct,
                 telegram_chat_id=str(message.chat.id),
-                title=f"{data['origin']} → {data['destination']} {data['departure_date']}",
+                title=f"{city_label(data['origin'])} → {city_label(data['destination'])} {data['departure_date']}",
             )
             db.add(route)
             db.commit()
@@ -153,13 +200,8 @@ def _register_handlers(dp: Dispatcher):
             schedule_route(route)
 
             await message.answer(
-                f"✅ Маршрут #{route.id} добавлен!\n"
-                f"{route.origin} → {route.destination} | {route.departure_date}\n"
-                f"Макс. цена: {int(route.max_price):,} ₽\n"
-                f"Прямые: {'да' if route.direct_only else 'нет'}\n"
-                f"Интервал: {route.interval_minutes} мин\n\n"
-                f"Для расширенных фильтров: {APP_BASE_URL}/route/{route.id}/edit",
-                parse_mode=None,
+                "✅ <b>Мониторинг создан</b>\n\n" + _route_card(route),
+                parse_mode="HTML",
                 reply_markup=main_menu(),
             )
         finally:
@@ -174,14 +216,15 @@ def _register_handlers(dp: Dispatcher):
             if not routes:
                 await message.answer("Нет активных маршрутов. Добавьте через /new", reply_markup=main_menu())
                 return
-            lines = ["📋 <b>Активные маршруты:</b>\n"]
-            for r in routes:
-                price_str = f"{int(r.last_best_price):,} ₽" if r.last_best_price else "нет данных"
-                lines.append(
-                    f"#{r.id} {r.origin}→{r.destination} {r.departure_date} "
-                    f"| ≤{int(r.max_price):,}₽ | лучшая: {price_str}"
+            await message.answer("📋 <b>Активные маршруты</b>", parse_mode="HTML", reply_markup=main_menu())
+            for route in routes:
+                last = (
+                    db.query(PriceCheck)
+                    .filter(PriceCheck.tracked_route_id == route.id)
+                    .order_by(PriceCheck.checked_at.desc())
+                    .first()
                 )
-            await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=main_menu())
+                await message.answer(_route_card(route, last), parse_mode="HTML")
         finally:
             db.close()
 
