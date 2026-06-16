@@ -1,5 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
+
+MSK_TZ = ZoneInfo("Europe/Moscow")
 
 RU_MONTHS_GENITIVE = [
     "",
@@ -46,3 +49,31 @@ def format_route_date_long(value: str | None) -> str:
         return value or "—"
     dt = datetime.strptime(iso, "%Y-%m-%d")
     return f"{dt.day} {RU_MONTHS_GENITIVE[dt.month]} {dt.year}"
+
+
+def to_msk(value: datetime | None) -> datetime | None:
+    """Convert datetime to Moscow time. Naive datetimes are treated as UTC/server time."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(MSK_TZ)
+
+
+def format_msk_datetime(value: datetime | str | None) -> str:
+    dt = to_msk(value) if not isinstance(value, str) else to_msk(value)
+    if dt is None:
+        return value if isinstance(value, str) and value else "—"
+    return dt.strftime("%d.%m.%Y %H:%M МСК")
+
+
+def format_msk_time(value: datetime | str | None) -> str:
+    dt = to_msk(value) if not isinstance(value, str) else to_msk(value)
+    if dt is None:
+        return value if isinstance(value, str) and value else "—"
+    return dt.strftime("%H:%M МСК")
