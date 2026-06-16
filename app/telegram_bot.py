@@ -163,7 +163,16 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
     if last_check:
         dep = last_check.departure_at.strftime("%H:%M") if last_check.departure_at else "—"
         arr = last_check.estimated_arrival_at.strftime("%H:%M") if last_check.estimated_arrival_at else "—"
-        lines.extend(["", "<b>Текущая проверка</b>", f"💵 Цена: {_fmt_price(last_check.price)}", f"✈️ Рейс: {last_check.airline or '—'} {last_check.flight_number or ''}".strip(), f"🛬 Аэропорт: {last_check.origin_airport or route.origin} → {last_check.destination_airport or route.destination}", f"🕓 Вылет: {dep}", f"🕕 Прилёт: {arr}, рассчитано", f"🏷 Продавец: {last_check.gate or '—'}"])
+        lines.extend([
+            "",
+            "<b>Текущая проверка</b>",
+            f"💵 Цена: {_fmt_price(last_check.price)}",
+            f"✈️ Рейс: {last_check.airline or '—'} {last_check.flight_number or ''}".strip(),
+            f"🛬 Аэропорт: {last_check.origin_airport or route.origin} → {last_check.destination_airport or route.destination}",
+            f"🕓 Вылет: {dep}",
+            f"🕕 Прилёт: {arr}, рассчитано",
+            f"🏷 Продавец: {last_check.gate or '—'}",
+        ])
     else:
         lines.extend(["", "<b>Текущая проверка</b>", "Пока нет данных. Проверка могла не найти билетов по условиям или API ещё не вернул результат."])
     if not _is_public_app_url():
@@ -442,15 +451,13 @@ def _register_handlers(dp: Dispatcher):
         finally:
             db.close()
         await callback.answer("Проверяю мониторинг...")
-        await check_route(route_id)
-        db = SessionLocal()
         try:
-            route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id, TrackedRoute.telegram_chat_id == chat_id).first()
-            last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route_id).order_by(PriceCheck.checked_at.desc()).first()
-            if route:
-                await callback.message.edit_text(_route_card(route, last), parse_mode="HTML", reply_markup=route_actions(route.id))
-        finally:
-            db.close()
+            await check_route(route_id)
+        except Exception as exc:
+            logger.exception("Inline route check failed")
+            await callback.message.answer(f"⚠️ Ошибка при проверке мониторинга #{route_id}: {exc}", reply_markup=main_menu())
+            return
+        await _send_checked_route_message(callback.message, route_id)
 
     @dp.callback_query(F.data.startswith("stop:"))
     async def cb_stop(callback):
