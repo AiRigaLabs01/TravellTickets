@@ -1,4 +1,5 @@
 import logging
+from html import escape
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -13,6 +14,7 @@ from app.database import SessionLocal
 from app.date_utils import format_route_date, format_route_date_long, parse_route_date
 from app.models import PriceCheck, TrackedRoute
 from app.scheduler import check_route, schedule_route
+from app.yandex_links import build_yandex_travel_url_for_route
 
 logger = logging.getLogger(__name__)
 CREATE_MONITORING_BUTTON = "➕ Создать мониторинг"
@@ -74,13 +76,14 @@ def _route_owner_filter(db, chat_id: str):
     return db.query(TrackedRoute).filter(TrackedRoute.is_active == True, TrackedRoute.telegram_chat_id == chat_id)
 
 
-def route_actions(route_id: int) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text="🔎 Проверить сейчас", callback_data=f"check:{route_id}")]]
+def route_actions(route_id: int, yandex_url: str | None = None) -> InlineKeyboardMarkup:
+    first_row = [InlineKeyboardButton(text="🔎 Проверить сейчас", callback_data=f"check:{route_id}")]
+    if yandex_url:
+        first_row.append(InlineKeyboardButton(text="🔗 Яндекс", url=yandex_url))
+    rows = [first_row]
     if _is_public_app_url():
-        rows[0].append(InlineKeyboardButton(text="📈 История", url=f"{APP_BASE_URL}/route/{route_id}"))
-        rows.append([InlineKeyboardButton(text="✏️ Изменить", url=f"{APP_BASE_URL}/route/{route_id}/edit"), InlineKeyboardButton(text="⏸ Остановить", callback_data=f"stop:{route_id}")])
-    else:
-        rows.append([InlineKeyboardButton(text="⏸ Остановить", callback_data=f"stop:{route_id}")])
+        rows.append([InlineKeyboardButton(text="📈 История", url=f"{APP_BASE_URL}/route/{route_id}")])
+    rows.append([InlineKeyboardButton(text="✏️ Изменить", callback_data=f"edit:{route_id}"), InlineKeyboardButton(text="⏸ Остановить", callback_data=f"stop:{route_id}")])
     rows.append([InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete:{route_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -149,6 +152,7 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
     trip_line = "туда-обратно" if getattr(route, "trip_type", "oneway") == "roundtrip" else "только туда"
     if getattr(route, "return_date", None):
         trip_line += f", обратно {format_route_date_long(route.return_date)}"
+    yandex_url = build_yandex_travel_url_for_route(route)
     lines = [
         f"🛫 <b>{city_label(route.origin)} → {city_label(route.destination)}</b>",
         f"📅 {format_route_date_long(route.departure_date)}",
@@ -175,16 +179,19 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
         ])
     else:
         lines.extend(["", "<b>Текущая проверка</b>", "Пока нет данных. Проверка могла не найти билетов по условиям или API ещё не вернул результат."])
-    if not _is_public_app_url():
-        lines.extend(["", "ℹ️ Веб-ссылки скрыты: APP_BASE_URL указывает на localhost. Укажите публичный HTTPS URL Replit, чтобы появились кнопки История/Изменить."])
+    lines.extend(["", f"🔗 <a href='{escape(yandex_url, quote=True)}'>Проверить на Яндекс Путешествиях</a>"])
     return "\n".join(lines)
+
+
+def _route_markup(route: TrackedRoute) -> InlineKeyboardMarkup:
+    return route_actions(route.id, build_yandex_travel_url_for_route(route))
 
 
 async def _send_route_created_message(message: Message, route: TrackedRoute, route_id: int, last: PriceCheck | None = None, extra: str | None = None):
     text = "✅ <b>Мониторинг создан</b>\n\n" + _route_card(route, last)
     if extra:
         text += f"\n\n{extra}"
-    await message.answer(text, parse_mode="HTML", reply_markup=route_actions(route_id))
+    await message.answer(text, parse_mode="HTML", reply_markup=_route_markup(route))
 
 
 async def _send_checked_route_message(message: Message, route_id: int):
@@ -194,9 +201,17 @@ async def _send_checked_route_message(message: Message, route_id: int):
         if not route:
             return
         last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route_id).order_by(PriceCheck.checked_at.desc()).first()
-        await message.answer("📊 <b>Результат ручной проверки</b>\n\n" + _route_card(route, last), parse_mode="HTML", reply_markup=route_actions(route.id))
+        await message.answer("📊 <b>Результат ручной проверки</b>\n\n" + _route_card(route, last), parse_mode="HTML", reply_markup=_route_markup(route))
     finally:
         db.close()
+
+
+def edit_menu(route_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Цена", callback_data=f"edit_price:{route_id}"), InlineKeyboardButton(text="📅 Дата", callback_data=f"edit_date:{route_id}")],
+        [InlineKeyboardButton(text="👥 Пассажиры", callback_data=f"edit_passengers:{route_id}"), InlineKeyboardButton(text="🧳 Багаж", callback_data=f"edit_baggage:{route_id}")],
+        [InlineKeyboardButton(text="⏱ Интервал", callback_data=f"edit_interval:{route_id}"), InlineKeyboardButton(text="🎯 Прямые", callback_data=f"edit_direct:{route_id}")],
+    ])
 
 
 class NewRouteStates(StatesGroup):
@@ -210,6 +225,13 @@ class NewRouteStates(StatesGroup):
     max_price = State()
     interval = State()
     direct_only = State()
+
+
+class EditRouteStates(StatesGroup):
+    price = State()
+    date = State()
+    passengers = State()
+    interval = State()
 
 
 def create_bot() -> tuple[Bot, Dispatcher]:
@@ -229,7 +251,7 @@ def _register_handlers(dp: Dispatcher):
     @dp.message(Command("help"))
     @dp.message(F.text == "❓ Помощь")
     async def cmd_help(message: Message):
-        await message.answer("📖 <b>Справка</b>\n\n➕ Создать мониторинг — добавить маршрут и условия поиска\n📋 Мои мониторинги — список только ваших активных мониторингов\n🔎 Проверить сейчас — проверить только ваши мониторинги вручную\n\nДля расширенных фильтров используйте веб-интерфейс:\n" + APP_BASE_URL, parse_mode="HTML", reply_markup=main_menu())
+        await message.answer("📖 <b>Справка</b>\n\n➕ Создать мониторинг — добавить маршрут и условия поиска\n📋 Мои мониторинги — список только ваших активных мониторингов\n🔎 Проверить сейчас — проверить только ваши мониторинги вручную", parse_mode="HTML", reply_markup=main_menu())
 
     @dp.message(Command("new"))
     @dp.message(F.text == CREATE_MONITORING_BUTTON)
@@ -260,8 +282,7 @@ def _register_handlers(dp: Dispatcher):
 
     @dp.message(NewRouteStates.trip_type)
     async def process_trip_type(message: Message, state: FSMContext):
-        txt = (message.text or "").strip().lower()
-        is_roundtrip = txt in ("туда-обратно", "обратно", "roundtrip", "rt")
+        is_roundtrip = (message.text or "").strip().lower() in ("туда-обратно", "обратно", "roundtrip", "rt")
         await state.update_data(trip_type="roundtrip" if is_roundtrip else "oneway")
         await state.set_state(NewRouteStates.departure_date)
         await message.answer("Введите дату вылета туда: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML")
@@ -305,8 +326,7 @@ def _register_handlers(dp: Dispatcher):
 
     @dp.message(NewRouteStates.baggage)
     async def process_baggage(message: Message, state: FSMContext):
-        txt = (message.text or "").strip().lower()
-        baggage = txt in ("нужен багаж", "багаж", "да", "yes", "y", "1", "true")
+        baggage = (message.text or "").strip().lower() in ("нужен багаж", "багаж", "да", "yes", "y", "1", "true")
         await state.update_data(baggage_required=baggage)
         await state.set_state(NewRouteStates.max_price)
         await message.answer("Максимальная цена (₽), например: <b>5000</b>:", parse_mode="HTML")
@@ -324,11 +344,10 @@ def _register_handlers(dp: Dispatcher):
 
     @dp.message(NewRouteStates.interval)
     async def process_interval(message: Message, state: FSMContext):
-        txt = message.text.strip()
-        if txt not in ("5", "10"):
+        if message.text.strip() not in ("5", "10"):
             await message.answer("Введите 5 или 10:")
             return
-        await state.update_data(interval_minutes=int(txt))
+        await state.update_data(interval_minutes=int(message.text.strip()))
         await state.set_state(NewRouteStates.direct_only)
         await message.answer("Только прямые рейсы?", reply_markup=one_time_keyboard([["Да", "Нет"]]))
 
@@ -363,13 +382,7 @@ def _register_handlers(dp: Dispatcher):
             db.close()
             await _send_route_created_message(message, route, route_id, None, f"⚠️ Не удалось сразу проверить цены: {exc}")
             return
-        db = SessionLocal()
-        try:
-            route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id, TrackedRoute.telegram_chat_id == _chat_id(message)).first()
-            last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route_id).order_by(PriceCheck.checked_at.desc()).first()
-            await _send_route_created_message(message, route, route_id, last)
-        finally:
-            db.close()
+        await _send_checked_route_message(message, route_id)
 
     @dp.message(Command("list"))
     @dp.message(F.text == "📋 Мои мониторинги")
@@ -384,9 +397,111 @@ def _register_handlers(dp: Dispatcher):
             await message.answer("📋 <b>Ваши активные мониторинги</b>", parse_mode="HTML", reply_markup=main_menu())
             for route in routes:
                 last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route.id).order_by(PriceCheck.checked_at.desc()).first()
-                await message.answer(_route_card(route, last), parse_mode="HTML", reply_markup=route_actions(route.id))
+                await message.answer(_route_card(route, last), parse_mode="HTML", reply_markup=_route_markup(route))
         finally:
             db.close()
+
+    @dp.callback_query(F.data.startswith("edit:"))
+    async def cb_edit(callback):
+        route_id = int(callback.data.split(":", 1)[1])
+        await callback.answer("Что изменить?")
+        await callback.message.answer("✏️ Что изменить в мониторинге?", reply_markup=edit_menu(route_id))
+
+    @dp.callback_query(F.data.startswith("edit_price:"))
+    async def cb_edit_price(callback, state: FSMContext):
+        route_id = int(callback.data.split(":", 1)[1])
+        await state.update_data(edit_route_id=route_id)
+        await state.set_state(EditRouteStates.price)
+        await callback.answer()
+        await callback.message.answer("Введите новую максимальную цену, например: <b>5000</b>", parse_mode="HTML")
+
+    @dp.message(EditRouteStates.price)
+    async def edit_price(message: Message, state: FSMContext):
+        try:
+            price = float(message.text.strip().replace(" ", ""))
+        except ValueError:
+            await message.answer("Введите число, например: 5000")
+            return
+        data = await state.get_data()
+        await state.clear()
+        await _update_route_field(message, data["edit_route_id"], max_price=price)
+
+    @dp.callback_query(F.data.startswith("edit_date:"))
+    async def cb_edit_date(callback, state: FSMContext):
+        route_id = int(callback.data.split(":", 1)[1])
+        await state.update_data(edit_route_id=route_id)
+        await state.set_state(EditRouteStates.date)
+        await callback.answer()
+        await callback.message.answer("Введите новую дату вылета: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML")
+
+    @dp.message(EditRouteStates.date)
+    async def edit_date(message: Message, state: FSMContext):
+        date = parse_route_date(message.text)
+        if not date:
+            await message.answer("Неверный формат даты. Введите, например: <b>21.06.2026</b>", parse_mode="HTML")
+            return
+        data = await state.get_data()
+        await state.clear()
+        await _update_route_field(message, data["edit_route_id"], departure_date=date, last_best_price=None, last_checked_at=None)
+
+    @dp.callback_query(F.data.startswith("edit_passengers:"))
+    async def cb_edit_passengers(callback, state: FSMContext):
+        route_id = int(callback.data.split(":", 1)[1])
+        await state.update_data(edit_route_id=route_id)
+        await state.set_state(EditRouteStates.passengers)
+        await callback.answer()
+        await callback.message.answer("Введите пассажиров в формате <b>взрослые,дети,младенцы</b>, например <b>2,1,0</b>", parse_mode="HTML")
+
+    @dp.message(EditRouteStates.passengers)
+    async def edit_passengers(message: Message, state: FSMContext):
+        parsed = _parse_passengers(message.text)
+        if not parsed:
+            await message.answer("Не понял количество пассажиров. Введите так: <b>2,1,0</b>", parse_mode="HTML")
+            return
+        data = await state.get_data()
+        await state.clear()
+        await _update_route_field(message, data["edit_route_id"], adult_seats=parsed[0], children_seats=parsed[1], infant_seats=parsed[2])
+
+    @dp.callback_query(F.data.startswith("edit_baggage:"))
+    async def cb_edit_baggage(callback):
+        route_id = int(callback.data.split(":", 1)[1])
+        await callback.answer()
+        await callback.message.answer("Выберите багаж:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Без багажа", callback_data=f"set_baggage:0:{route_id}"), InlineKeyboardButton(text="Нужен багаж", callback_data=f"set_baggage:1:{route_id}")]]))
+
+    @dp.callback_query(F.data.startswith("set_baggage:"))
+    async def cb_set_baggage(callback):
+        _, value, route_id = callback.data.split(":", 2)
+        await callback.answer("Сохраняю...")
+        await _update_route_field(callback.message, int(route_id), baggage_required=(value == "1"))
+
+    @dp.callback_query(F.data.startswith("edit_interval:"))
+    async def cb_edit_interval(callback, state: FSMContext):
+        route_id = int(callback.data.split(":", 1)[1])
+        await state.update_data(edit_route_id=route_id)
+        await state.set_state(EditRouteStates.interval)
+        await callback.answer()
+        await callback.message.answer("Введите интервал: <b>5</b> или <b>10</b>", parse_mode="HTML")
+
+    @dp.message(EditRouteStates.interval)
+    async def edit_interval(message: Message, state: FSMContext):
+        if message.text.strip() not in ("5", "10"):
+            await message.answer("Введите 5 или 10")
+            return
+        data = await state.get_data()
+        await state.clear()
+        await _update_route_field(message, data["edit_route_id"], interval_minutes=int(message.text.strip()))
+
+    @dp.callback_query(F.data.startswith("edit_direct:"))
+    async def cb_edit_direct(callback):
+        route_id = int(callback.data.split(":", 1)[1])
+        await callback.answer()
+        await callback.message.answer("Только прямые рейсы?", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Да", callback_data=f"set_direct:1:{route_id}"), InlineKeyboardButton(text="Нет", callback_data=f"set_direct:0:{route_id}")]]))
+
+    @dp.callback_query(F.data.startswith("set_direct:"))
+    async def cb_set_direct(callback):
+        _, value, route_id = callback.data.split(":", 2)
+        await callback.answer("Сохраняю...")
+        await _update_route_field(callback.message, int(route_id), direct_only=(value == "1"))
 
     @dp.message(Command("stop"))
     async def cmd_stop(message: Message):
@@ -394,12 +509,7 @@ def _register_handlers(dp: Dispatcher):
         if len(parts) < 2:
             await message.answer("Использование: /stop &lt;id&gt;\nПример: /stop 1", parse_mode="HTML")
             return
-        try:
-            route_id = int(parts[1])
-        except ValueError:
-            await message.answer("ID должен быть числом")
-            return
-        await _stop_route(message, route_id)
+        await _stop_route(message, int(parts[1]))
 
     @dp.message(Command("delete"))
     async def cmd_delete(message: Message):
@@ -407,12 +517,7 @@ def _register_handlers(dp: Dispatcher):
         if len(parts) < 2:
             await message.answer("Использование: /delete &lt;id&gt;\nПример: /delete 1", parse_mode="HTML")
             return
-        try:
-            route_id = int(parts[1])
-        except ValueError:
-            await message.answer("ID должен быть числом")
-            return
-        await _delete_route(message, route_id)
+        await _delete_route(message, int(parts[1]))
 
     @dp.message(Command("check"))
     @dp.message(F.text == "🔎 Проверить сейчас")
@@ -426,7 +531,6 @@ def _register_handlers(dp: Dispatcher):
             route_ids = [route.id for route in routes]
         finally:
             db.close()
-
         await message.answer(f"🔍 Проверяю {len(route_ids)} ваш(их) мониторинг(ов)...")
         for route_id in route_ids:
             try:
@@ -441,15 +545,6 @@ def _register_handlers(dp: Dispatcher):
     @dp.callback_query(F.data.startswith("check:"))
     async def cb_check(callback):
         route_id = int(callback.data.split(":", 1)[1])
-        chat_id = str(callback.message.chat.id)
-        db = SessionLocal()
-        try:
-            route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id, TrackedRoute.telegram_chat_id == chat_id).first()
-            if not route:
-                await callback.answer("Это не ваш мониторинг или он уже удалён", show_alert=True)
-                return
-        finally:
-            db.close()
         await callback.answer("Проверяю мониторинг...")
         try:
             await check_route(route_id)
@@ -470,6 +565,25 @@ def _register_handlers(dp: Dispatcher):
         route_id = int(callback.data.split(":", 1)[1])
         await callback.answer("Удаляю мониторинг...")
         await _delete_route(callback.message, route_id)
+
+
+async def _update_route_field(message: Message, route_id: int, **fields):
+    db = SessionLocal()
+    try:
+        route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id, TrackedRoute.telegram_chat_id == _chat_id(message)).first()
+        if not route:
+            await message.answer(f"Мониторинг #{route_id} не найден среди ваших мониторингов")
+            return
+        for key, value in fields.items():
+            setattr(route, key, value)
+        route.last_error = None
+        db.commit()
+        db.refresh(route)
+        schedule_route(route)
+        last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route.id).order_by(PriceCheck.checked_at.desc()).first()
+        await message.answer("✅ <b>Мониторинг обновлён</b>\n\n" + _route_card(route, last), parse_mode="HTML", reply_markup=_route_markup(route))
+    finally:
+        db.close()
 
 
 async def _stop_route(message: Message, route_id: int):
