@@ -70,8 +70,7 @@ def owned_route(db, message: Message, route_id: int):
 
 
 def route_actions(route: TrackedRoute) -> InlineKeyboardMarkup:
-    yandex_url = build_yandex_travel_url_for_route(route)
-    rows = [[InlineKeyboardButton(text="🔎 Проверить сейчас", callback_data=f"check:{route.id}"), InlineKeyboardButton(text="🔗 Яндекс", url=yandex_url)]]
+    rows = [[InlineKeyboardButton(text="🔎 Проверить сейчас", callback_data=f"check:{route.id}"), InlineKeyboardButton(text="🔗 Яндекс", url=build_yandex_travel_url_for_route(route))]]
     if public_app_url():
         rows.append([InlineKeyboardButton(text="📈 История", url=f"{APP_BASE_URL}/route/{route.id}")])
     rows.append([InlineKeyboardButton(text="✏️ Изменить", callback_data=f"edit:{route.id}"), InlineKeyboardButton(text="⏸ Остановить", callback_data=f"stop:{route.id}")])
@@ -152,9 +151,15 @@ def route_card(route: TrackedRoute, last: PriceCheck | None = None) -> str:
         f"🎯 Фильтры: {', '.join(filters) if filters else 'без доп. фильтров'}",
     ]
     if last:
+        matches = getattr(last, "matches_filters", True)
+        if matches:
+            lines += ["", "<b>Текущая проверка</b>", f"💵 Цена: {fmt_price(last.price)}"]
+        else:
+            diff = int(last.price - route.max_price)
+            lines += ["", "<b>Минимальная найденная цена выше вашего лимита</b>", f"💵 Найдено: {fmt_price(last.price)}", f"🎯 Ваш лимит: {fmt_price(route.max_price)}"]
+            if diff > 0:
+                lines.append(f"↗️ Выше лимита на {fmt_price(diff)}")
         lines += [
-            "", "<b>Текущая проверка</b>",
-            f"💵 Цена: {fmt_price(last.price)}",
             f"✈️ Рейс: {last.airline or '—'} {last.flight_number or ''}".strip(),
             f"🛬 Аэропорт: {last.origin_airport or route.origin} → {last.destination_airport or route.destination}",
             f"🕓 Вылет: {format_msk_time(last.departure_at)}",
