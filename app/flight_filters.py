@@ -39,7 +39,7 @@ def _split_codes(value: str | None) -> list[str]:
     return [c.strip().upper() for c in value.split(",") if c.strip()]
 
 
-def apply_filters(flights: list[dict], route: Any) -> list[dict]:
+def apply_filters(flights: list[dict], route: Any, *, enforce_price: bool = True) -> list[dict]:
     results = []
     airline_codes = _split_codes(route.airline_codes)
     origin_airports = _split_codes(route.origin_airports)
@@ -47,7 +47,7 @@ def apply_filters(flights: list[dict], route: Any) -> list[dict]:
 
     for f in flights:
         # Price filter
-        if f["price"] > route.max_price:
+        if enforce_price and f["price"] > route.max_price:
             continue
 
         # Direct only
