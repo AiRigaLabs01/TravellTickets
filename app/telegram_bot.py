@@ -62,7 +62,7 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
         arr = last_check.estimated_arrival_at.strftime("%H:%M") if last_check.estimated_arrival_at else "—"
         lines.extend([
             "",
-            "<b>Последняя проверка</b>",
+            "<b>Текущая проверка</b>",
             f"💵 Цена: {_fmt_price(last_check.price)}",
             f"✈️ Рейс: {last_check.airline or '—'} {last_check.flight_number or ''}".strip(),
             f"🛬 Аэропорт: {last_check.origin_airport or route.origin} → {last_check.destination_airport or route.destination}",
@@ -71,10 +71,10 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
             f"🏷 Продавец: {last_check.gate or '—'}",
         ])
     else:
-        lines.extend(["", "<b>Последняя проверка</b>", "Пока нет данных"])
+        lines.extend(["", "<b>Текущая проверка</b>", "Пока нет данных. Проверка могла не найти билетов по условиям или API ещё не вернул результат."])
 
     lines.append("")
-    lines.append(f"Открыть маршрут: {APP_BASE_URL}/route/{route.id}")
+    lines.append(f"Открыть текущие цены: {APP_BASE_URL}/route/{route.id}")
     lines.append(f"Изменить фильтры: {APP_BASE_URL}/route/{route.id}/edit")
     lines.append(f"Остановить: /stop {route.id}")
     return "\n".join(lines)
@@ -182,6 +182,12 @@ def _register_handlers(dp: Dispatcher):
         data = await state.get_data()
         await state.clear()
 
+        status_message = await message.answer(
+            "⏳ <b>Мониторинг создан. Проверяю текущие цены...</b>",
+            parse_mode="HTML",
+            reply_markup=main_menu(),
+        )
+
         db = SessionLocal()
         try:
             route = TrackedRoute(
@@ -198,11 +204,33 @@ def _register_handlers(dp: Dispatcher):
             db.commit()
             db.refresh(route)
             schedule_route(route)
+        finally:
+            db.close()
 
-            await message.answer(
-                "✅ <b>Мониторинг создан</b>\n\n" + _route_card(route),
+        try:
+            await check_route(route.id)
+        except Exception as exc:
+            logger.exception("Immediate route check failed")
+            await status_message.edit_text(
+                "✅ <b>Мониторинг создан</b>\n\n"
+                + _route_card(route)
+                + f"\n\n⚠️ Не удалось сразу проверить цены: {exc}",
                 parse_mode="HTML",
-                reply_markup=main_menu(),
+            )
+            return
+
+        db = SessionLocal()
+        try:
+            route = db.query(TrackedRoute).filter(TrackedRoute.id == route.id).first()
+            last = (
+                db.query(PriceCheck)
+                .filter(PriceCheck.tracked_route_id == route.id)
+                .order_by(PriceCheck.checked_at.desc())
+                .first()
+            )
+            await status_message.edit_text(
+                "✅ <b>Мониторинг создан</b>\n\n" + _route_card(route, last),
+                parse_mode="HTML",
             )
         finally:
             db.close()
