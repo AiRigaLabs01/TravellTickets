@@ -37,6 +37,7 @@
           {% if route.last_error %}<span class="badge badge-error" title="{{ route.last_error }}">⚠ ошибка</span>{% endif %}
         </div>
         <div class="route-meta">
+          <span>👤 {{ creator_label(route) }}</span>
           <span>📅 {{ route.departure_date | fmt_route_date }}</span>
           <span>💰 до {{ route.max_price | fmt_price }}</span>
           <span>⏱ каждые {{ route.interval_minutes }} мин</span>
