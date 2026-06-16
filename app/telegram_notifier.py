@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any
 
 from app.config import TELEGRAM_BOT_TOKEN
-from app.date_utils import format_route_date_long
+from app.date_utils import format_msk_time, format_route_date_long
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +19,7 @@ def _format_duration(minutes: int) -> str:
 
 
 def _fmt_dt(dt: datetime | None) -> str:
-    if dt is None:
-        return "—"
-    return dt.strftime("%H:%M")
+    return format_msk_time(dt)
 
 
 def _fmt_date(dt: datetime | None) -> str:
@@ -80,7 +78,7 @@ def build_notification_text(route: Any, flight: dict) -> str:
 
 
 def build_no_changes_text(route: Any, flights_count: int, filtered_count: int, best_flight: dict | None) -> str:
-    checked_at = datetime.now().strftime("%H:%M")
+    checked_at = format_msk_time(datetime.utcnow())
     lines = [
         "✅ <b>Изменений за период не было</b>",
         f"🔄 Проверено: {checked_at}",
@@ -108,7 +106,7 @@ def build_no_changes_text(route: Any, flights_count: int, filtered_count: int, b
 
 
 def build_debug_monitoring_text(route: Any, flights_count: int, filtered_count: int, best_flight: dict | None, error: str | None = None) -> str:
-    checked_at = datetime.now().strftime("%H:%M:%S")
+    checked_at = format_msk_time(datetime.utcnow())
     lines = [
         "🧪 <b>Отладка мониторинга</b>",
         f"🔄 Проверка выполнена: {checked_at}",
