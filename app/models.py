@@ -56,6 +56,7 @@ class PriceCheck(Base):
     tracked_route_id = Column(Integer, ForeignKey("tracked_routes.id"), nullable=False)
     checked_at = Column(DateTime, default=datetime.utcnow)
     price = Column(Float, nullable=False)
+    matches_filters = Column(Boolean, default=True)
     airline = Column(String, nullable=True)
     flight_number = Column(String, nullable=True)
     gate = Column(String, nullable=True)
