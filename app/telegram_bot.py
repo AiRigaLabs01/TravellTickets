@@ -1,5 +1,4 @@
 import logging
-from html import escape
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -152,7 +151,6 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
     trip_line = "туда-обратно" if getattr(route, "trip_type", "oneway") == "roundtrip" else "только туда"
     if getattr(route, "return_date", None):
         trip_line += f", обратно {format_route_date_long(route.return_date)}"
-    yandex_url = build_yandex_travel_url_for_route(route)
     lines = [
         f"🛫 <b>{city_label(route.origin)} → {city_label(route.destination)}</b>",
         f"📅 {format_route_date_long(route.departure_date)}",
@@ -179,7 +177,6 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
         ])
     else:
         lines.extend(["", "<b>Текущая проверка</b>", "Пока нет данных. Проверка могла не найти билетов по условиям или API ещё не вернул результат."])
-    lines.extend(["", f"🔗 <a href='{escape(yandex_url, quote=True)}'>Проверить на Яндекс Путешествиях</a>"])
     return "\n".join(lines)
 
 
