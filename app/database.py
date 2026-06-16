@@ -32,6 +32,10 @@ def _ensure_tracked_route_columns():
     existing = {c["name"] for c in inspector.get_columns("tracked_routes")}
     boolean_default = "BOOLEAN DEFAULT false" if _is_postgres() else "BOOLEAN DEFAULT 0"
     columns = {
+        "creator_source": "VARCHAR DEFAULT 'web'",
+        "creator_display_name": "VARCHAR",
+        "creator_username": "VARCHAR",
+        "creator_telegram_user_id": "VARCHAR",
         "trip_type": "VARCHAR DEFAULT 'oneway'",
         "adult_seats": "INTEGER DEFAULT 1",
         "children_seats": "INTEGER DEFAULT 0",
