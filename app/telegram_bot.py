@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -17,6 +16,7 @@ from aiogram.types import (
 from app.city_codes import city_label
 from app.config import TELEGRAM_BOT_TOKEN, APP_BASE_URL
 from app.database import SessionLocal
+from app.date_utils import format_route_date, format_route_date_long, parse_route_date
 from app.models import PriceCheck, TrackedRoute
 from app.scheduler import check_route, schedule_route
 
@@ -77,7 +77,7 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
 
     lines = [
         f"🛫 <b>{origin} → {destination}</b>",
-        f"📅 {route.departure_date}",
+        f"📅 {format_route_date_long(route.departure_date)}",
         f"💰 До {_fmt_price(route.max_price)}",
         f"⏱ Проверка: каждые {route.interval_minutes} минут",
         f"🎯 Фильтры: {filter_text}",
@@ -127,8 +127,7 @@ def _register_handlers(dp: Dispatcher):
     @dp.message(Command("start"))
     async def cmd_start(message: Message):
         await message.answer(
-            "✈️ <b>TravellTickets</b>\n"
-            "Мониторинг цен на авиабилеты\n\n"
+            "✈️ <b>TravellTickets</b>\nМониторинг цен на авиабилеты\n\n"
             "Я помогу найти дешёвый билет и пришлю уведомление, когда цена подойдёт под ваши условия.\n\n"
             "Выберите действие кнопками ниже.",
             parse_mode="HTML",
@@ -165,17 +164,15 @@ def _register_handlers(dp: Dispatcher):
     async def process_destination(message: Message, state: FSMContext):
         await state.update_data(destination=message.text.strip().upper())
         await state.set_state(NewRouteStates.departure_date)
-        await message.answer("Введите дату вылета в формате <b>ГГГГ-ММ-ДД</b> (например: 2026-06-18):", parse_mode="HTML")
+        await message.answer("Введите дату вылета: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML")
 
     @dp.message(NewRouteStates.departure_date)
     async def process_departure_date(message: Message, state: FSMContext):
-        date_str = message.text.strip()
-        try:
-            datetime.strptime(date_str, "%Y-%m-%d")
-        except ValueError:
-            await message.answer("Неверный формат. Введите дату как ГГГГ-ММ-ДД:")
+        normalized_date = parse_route_date(message.text)
+        if not normalized_date:
+            await message.answer("Неверный формат. Введите дату как <b>21.06.2026</b> или <b>2026-06-21</b>:", parse_mode="HTML")
             return
-        await state.update_data(departure_date=date_str)
+        await state.update_data(departure_date=normalized_date)
         await state.set_state(NewRouteStates.max_price)
         await message.answer("Максимальная цена (₽), например: <b>5000</b>:", parse_mode="HTML")
 
@@ -206,12 +203,7 @@ def _register_handlers(dp: Dispatcher):
         direct = txt in ("да", "yes", "y", "д", "1", "true")
         data = await state.get_data()
         await state.clear()
-
-        status_message = await message.answer(
-            "⏳ <b>Мониторинг создан. Проверяю текущие цены...</b>",
-            parse_mode="HTML",
-            reply_markup=main_menu(),
-        )
+        status_message = await message.answer("⏳ <b>Мониторинг создан. Проверяю текущие цены...</b>", parse_mode="HTML", reply_markup=main_menu())
 
         db = SessionLocal()
         try:
@@ -223,7 +215,7 @@ def _register_handlers(dp: Dispatcher):
                 interval_minutes=data["interval_minutes"],
                 direct_only=direct,
                 telegram_chat_id=str(message.chat.id),
-                title=f"{city_label(data['origin'])} → {city_label(data['destination'])} {data['departure_date']}",
+                title=f"{city_label(data['origin'])} → {city_label(data['destination'])} {format_route_date(data['departure_date'])}",
             )
             db.add(route)
             db.commit()
@@ -236,29 +228,14 @@ def _register_handlers(dp: Dispatcher):
             await check_route(route.id)
         except Exception as exc:
             logger.exception("Immediate route check failed")
-            await status_message.edit_text(
-                "✅ <b>Мониторинг создан</b>\n\n"
-                + _route_card(route)
-                + f"\n\n⚠️ Не удалось сразу проверить цены: {exc}",
-                parse_mode="HTML",
-                reply_markup=route_actions(route.id),
-            )
+            await status_message.edit_text("✅ <b>Мониторинг создан</b>\n\n" + _route_card(route) + f"\n\n⚠️ Не удалось сразу проверить цены: {exc}", parse_mode="HTML", reply_markup=route_actions(route.id))
             return
 
         db = SessionLocal()
         try:
             route = db.query(TrackedRoute).filter(TrackedRoute.id == route.id).first()
-            last = (
-                db.query(PriceCheck)
-                .filter(PriceCheck.tracked_route_id == route.id)
-                .order_by(PriceCheck.checked_at.desc())
-                .first()
-            )
-            await status_message.edit_text(
-                "✅ <b>Мониторинг создан</b>\n\n" + _route_card(route, last),
-                parse_mode="HTML",
-                reply_markup=route_actions(route.id),
-            )
+            last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route.id).order_by(PriceCheck.checked_at.desc()).first()
+            await status_message.edit_text("✅ <b>Мониторинг создан</b>\n\n" + _route_card(route, last), parse_mode="HTML", reply_markup=route_actions(route.id))
         finally:
             db.close()
 
@@ -273,17 +250,8 @@ def _register_handlers(dp: Dispatcher):
                 return
             await message.answer("📋 <b>Активные маршруты</b>", parse_mode="HTML", reply_markup=main_menu())
             for route in routes:
-                last = (
-                    db.query(PriceCheck)
-                    .filter(PriceCheck.tracked_route_id == route.id)
-                    .order_by(PriceCheck.checked_at.desc())
-                    .first()
-                )
-                await message.answer(
-                    _route_card(route, last),
-                    parse_mode="HTML",
-                    reply_markup=route_actions(route.id),
-                )
+                last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route.id).order_by(PriceCheck.checked_at.desc()).first()
+                await message.answer(_route_card(route, last), parse_mode="HTML", reply_markup=route_actions(route.id))
         finally:
             db.close()
 
@@ -321,22 +289,12 @@ def _register_handlers(dp: Dispatcher):
         route_id = int(callback.data.split(":", 1)[1])
         await callback.answer("Проверяю маршрут...")
         await check_route(route_id)
-
         db = SessionLocal()
         try:
             route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
-            last = (
-                db.query(PriceCheck)
-                .filter(PriceCheck.tracked_route_id == route_id)
-                .order_by(PriceCheck.checked_at.desc())
-                .first()
-            )
+            last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route_id).order_by(PriceCheck.checked_at.desc()).first()
             if route:
-                await callback.message.edit_text(
-                    _route_card(route, last),
-                    parse_mode="HTML",
-                    reply_markup=route_actions(route.id),
-                )
+                await callback.message.edit_text(_route_card(route, last), parse_mode="HTML", reply_markup=route_actions(route.id))
         finally:
             db.close()
 
