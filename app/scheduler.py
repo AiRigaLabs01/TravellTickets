@@ -6,13 +6,17 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.orm import Session
 
+from app.config import DEBUG_MONITORING_MESSAGES, TELEGRAM_CHAT_ID
 from app.database import SessionLocal
 from app.flight_filters import apply_filters
 from app.models import Notification, PriceCheck, TrackedRoute
-from app.telegram_notifier import build_notification_text, send_telegram_notification
+from app.telegram_notifier import (
+    build_debug_monitoring_text,
+    build_notification_text,
+    send_telegram_notification,
+)
 from app.travelpayouts_client import TravelpayoutsError, search_prices
 from app.yandex_links import build_yandex_travel_url
-from app.config import TELEGRAM_CHAT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +28,6 @@ def _should_notify(route: TrackedRoute, flight: dict, db: Session) -> bool:
     flight_number = flight.get("flight_number", "")
     airline = flight.get("airline", "")
 
-    # Check if same flight+price already notified
     existing = (
         db.query(Notification)
         .join(PriceCheck)
@@ -46,6 +49,16 @@ def _should_notify(route: TrackedRoute, flight: dict, db: Session) -> bool:
     return False
 
 
+async def _send_debug_message(route: TrackedRoute, flights_count: int, filtered_count: int, best_flight: dict | None, error: str | None = None):
+    if not DEBUG_MONITORING_MESSAGES:
+        return
+    chat_id = route.telegram_chat_id or TELEGRAM_CHAT_ID
+    if not chat_id:
+        return
+    text = build_debug_monitoring_text(route, flights_count, filtered_count, best_flight, error)
+    await send_telegram_notification(chat_id, text)
+
+
 async def check_route(route_id: int):
     db: Session = SessionLocal()
     try:
@@ -63,6 +76,7 @@ async def check_route(route_id: int):
             route.last_error = error_msg
             route.last_checked_at = datetime.utcnow()
             db.commit()
+            await _send_debug_message(route, 0, 0, None, error_msg)
             return
 
         route.last_error = None
@@ -70,6 +84,8 @@ async def check_route(route_id: int):
 
         filtered = apply_filters(flights, route)
         logger.info(f"Route #{route_id}: {len(flights)} flights found, {len(filtered)} after filters")
+
+        best_flight = min(filtered, key=lambda f: f.get("price", 10**12)) if filtered else None
 
         for flight in filtered:
             yandex_url = build_yandex_travel_url(
@@ -119,6 +135,7 @@ async def check_route(route_id: int):
                 route.last_best_price = flight["price"]
 
         db.commit()
+        await _send_debug_message(route, len(flights), len(filtered), best_flight)
 
     except Exception as e:
         logger.exception(f"Unexpected error checking route #{route_id}: {e}")
