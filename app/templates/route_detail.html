@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ route.title or (route.origin ~ " → " ~ route.destination) }} — TravellTickets</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav class="navbar">
+  <a class="brand" href="/">✈️ TravellTickets</a>
+</nav>
+
+<div class="container">
+  <div style="margin-bottom:16px">
+    <a class="back-link" href="/">← Все маршруты</a>
+  </div>
+
+  <div class="page-header">
+    <div>
+      <h1>{{ route.title or (route.origin ~ " → " ~ route.destination) }}</h1>
+      <div style="margin-top:4px;font-size:13px;color:var(--muted)">
+        {{ route.origin }} → {{ route.destination }} | {{ route.departure_date }}
+      </div>
+    </div>
+    <div class="action-buttons">
+      <form method="post" action="/route/{{ route.id }}/check">
+        <button class="btn btn-primary" type="submit">🔍 Проверить сейчас</button>
+      </form>
+      <a class="btn btn-secondary" href="/route/{{ route.id }}/edit">✏️ Изменить</a>
+    </div>
+  </div>
+
+  {% if route.last_error %}
+  <div class="alert alert-error">⚠️ Последняя ошибка: {{ route.last_error }}</div>
+  {% endif %}
+
+  <div class="card" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:20px">
+    <div>
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600">Статус</div>
+      {% if route.is_active %}
+        <span class="badge badge-active">активен</span>
+      {% else %}
+        <span class="badge badge-inactive">остановлен</span>
+      {% endif %}
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600">Макс. цена</div>
+      <div style="font-weight:600">{{ route.max_price | fmt_price }}</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600">Лучшая цена</div>
+      {% if route.last_best_price %}
+        <div class="price-big" style="font-size:18px">{{ route.last_best_price | fmt_price }}</div>
+      {% else %}
+        <div class="price-na">нет данных</div>
+      {% endif %}
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600">Последняя проверка</div>
+      <div>{{ route.last_checked_at | fmt_dt }}</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600">Интервал</div>
+      <div>каждые {{ route.interval_minutes }} мин</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600">Прямые рейсы</div>
+      <div>{{ "Только прямые" if route.direct_only else "Все рейсы" }}</div>
+    </div>
+  </div>
+
+  {% if route.airline_codes or route.destination_airports or route.origin_airports or route.departure_time_from or route.arrival_time_from %}
+  <div class="card" style="margin-bottom:20px">
+    <div style="font-size:13px;font-weight:600;margin-bottom:8px">Активные фильтры</div>
+    <div style="font-size:13px;display:flex;flex-wrap:wrap;gap:12px;color:var(--muted)">
+      {% if route.airline_codes %}
+        <span>Авиакомпании: {% for c in route.airline_codes.split(',') %}<span class="tag">{{ c.strip() }}</span>{% endfor %}</span>
+      {% endif %}
+      {% if route.origin_airports %}
+        <span>Аэропорт вылета: {% for c in route.origin_airports.split(',') %}<span class="tag">{{ c.strip() }}</span>{% endfor %}</span>
+      {% endif %}
+      {% if route.destination_airports %}
+        <span>Аэропорт прилёта: {% for c in route.destination_airports.split(',') %}<span class="tag">{{ c.strip() }}</span>{% endfor %}</span>
+      {% endif %}
+      {% if route.departure_time_from or route.departure_time_to %}
+        <span>Вылет: {{ route.departure_time_from or "—" }} – {{ route.departure_time_to or "—" }}</span>
+      {% endif %}
+      {% if route.arrival_time_from or route.arrival_time_to %}
+        <span>Прилёт (расч.): {{ route.arrival_time_from or "—" }} – {{ route.arrival_time_to or "—" }}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <h2 style="font-size:16px;font-weight:600;margin-bottom:12px">История проверок (последние 50)</h2>
+
+  {% if checks %}
+  <div class="card" style="padding:0;overflow:auto">
+    <table>
+      <thead>
+        <tr>
+          <th>Проверено</th>
+          <th>Цена</th>
+          <th>Рейс</th>
+          <th>Продавец</th>
+          <th>Аэропорты</th>
+          <th>Вылет</th>
+          <th>Прилёт *</th>
+          <th>Пересадки</th>
+          <th>Ссылки</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in checks %}
+        <tr>
+          <td>{{ c.checked_at | fmt_dt }}</td>
+          <td><strong>{{ c.price | fmt_price }}</strong></td>
+          <td>{{ c.airline }} {{ c.flight_number }}</td>
+          <td>{{ c.gate or "—" }}</td>
+          <td>{{ c.origin_airport or "?" }} → {{ c.destination_airport or "?" }}</td>
+          <td>{{ c.departure_at | fmt_time }}</td>
+          <td>{{ c.estimated_arrival_at | fmt_time }}{% if c.is_estimated_arrival %} <span title="Рассчитано по длительности" style="color:var(--muted)">~</span>{% endif %}</td>
+          <td>{{ c.transfers }}</td>
+          <td>
+            {% if c.aviasales_url %}<a href="{{ c.aviasales_url }}" target="_blank">Aviasales</a>{% endif %}
+            {% if c.yandex_travel_url %} · <a href="{{ c.yandex_travel_url }}" target="_blank">Яндекс</a>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:11px;color:var(--muted);margin-top:6px">* Время прилёта рассчитано по длительности рейса (~ = оценочное)</p>
+  {% else %}
+    <div class="card">
+      <div style="color:var(--muted);text-align:center;padding:24px">Проверок ещё не было. Нажмите «Проверить сейчас».</div>
+    </div>
+  {% endif %}
+
+  {% if notifications %}
+  <h2 style="font-size:16px;font-weight:600;margin:20px 0 12px">Отправленные уведомления</h2>
+  <div class="card" style="padding:0;overflow:auto">
+    <table>
+      <thead><tr><th>Отправлено</th><th>Канал</th><th>Сообщение</th></tr></thead>
+      <tbody>
+        {% for n in notifications %}
+        <tr>
+          <td>{{ n.sent_at | fmt_dt }}</td>
+          <td>{{ n.channel }}</td>
+          <td style="max-width:400px;white-space:pre-line;font-size:11px">{{ n.message }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="disclaimer" style="margin-top:20px">
+    ⚠️ Цены из кэша Aviasales. Перед покупкой всегда уточняйте актуальную цену и наличие билета у продавца.
+  </div>
+</div>
+</body>
+</html>
