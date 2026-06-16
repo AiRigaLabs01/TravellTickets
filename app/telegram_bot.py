@@ -22,14 +22,7 @@ dp: Dispatcher | None = None
 
 
 def main_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=CREATE_MONITORING_BUTTON), KeyboardButton(text="📋 Мои мониторинги")],
-            [KeyboardButton(text="🔎 Проверить сейчас"), KeyboardButton(text="❓ Помощь")],
-        ],
-        resize_keyboard=True,
-        input_field_placeholder="Выберите действие",
-    )
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=CREATE_MONITORING_BUTTON), KeyboardButton(text="📋 Мои мониторинги")], [KeyboardButton(text="🔎 Проверить сейчас"), KeyboardButton(text="❓ Помощь")]], resize_keyboard=True, input_field_placeholder="Выберите действие")
 
 
 def _is_public_app_url() -> bool:
@@ -55,9 +48,29 @@ def _fmt_price(value) -> str:
 
 def _resolve_city_input(value: str) -> str | None:
     code = resolve_iata(value or "")
-    if len(code) == 3 and code.isalpha():
-        return code.upper()
-    return None
+    return code.upper() if len(code) == 3 and code.isalpha() else None
+
+
+def _chat_id(message: Message) -> str:
+    return str(message.chat.id)
+
+
+def _creator_display(message: Message) -> str:
+    user = message.from_user
+    if not user:
+        return f"Telegram chat {message.chat.id}"
+    if user.username:
+        return f"@{user.username}"
+    name = " ".join(part for part in [user.first_name, user.last_name] if part).strip()
+    return name or f"Telegram user {user.id}"
+
+
+def _own_active_routes(db, message: Message):
+    return db.query(TrackedRoute).filter(TrackedRoute.is_active == True, TrackedRoute.telegram_chat_id == _chat_id(message)).all()
+
+
+def _get_own_route(db, message: Message, route_id: int):
+    return db.query(TrackedRoute).filter(TrackedRoute.id == route_id, TrackedRoute.telegram_chat_id == _chat_id(message)).first()
 
 
 def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> str:
@@ -69,13 +82,8 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
     if route.airline_codes:
         filters.append(f"авиакомпании: {route.airline_codes}")
     filter_text = ", ".join(filters) if filters else "без доп. фильтров"
-    lines = [
-        f"🛫 <b>{city_label(route.origin)} → {city_label(route.destination)}</b>",
-        f"📅 {format_route_date_long(route.departure_date)}",
-        f"💰 До {_fmt_price(route.max_price)}",
-        f"⏱ Проверка: каждые {route.interval_minutes} минут",
-        f"🎯 Фильтры: {filter_text}",
-    ]
+    author = route.creator_display_name or route.creator_username or route.creator_telegram_user_id or route.telegram_chat_id or "—"
+    lines = [f"🛫 <b>{city_label(route.origin)} → {city_label(route.destination)}</b>", f"📅 {format_route_date_long(route.departure_date)}", f"💰 До {_fmt_price(route.max_price)}", f"⏱ Проверка: каждые {route.interval_minutes} минут", f"👤 Автор: {author}", f"🎯 Фильтры: {filter_text}"]
     if last_check:
         dep = last_check.departure_at.strftime("%H:%M") if last_check.departure_at else "—"
         arr = last_check.estimated_arrival_at.strftime("%H:%M") if last_check.estimated_arrival_at else "—"
@@ -113,7 +121,7 @@ def _register_handlers(dp: Dispatcher):
     @dp.message(Command("help"))
     @dp.message(F.text == "❓ Помощь")
     async def cmd_help(message: Message):
-        await message.answer("📖 <b>Справка</b>\n\n➕ Создать мониторинг — добавить маршрут и условия поиска\n📋 Мои мониторинги — список активных мониторингов\n🔎 Проверить сейчас — проверить все мониторинги вручную\n\nДля расширенных фильтров используйте веб-интерфейс:\n" + APP_BASE_URL, parse_mode="HTML", reply_markup=main_menu())
+        await message.answer("📖 <b>Справка</b>\n\n➕ Создать мониторинг — добавить маршрут и условия поиска\n📋 Мои мониторинги — список только ваших активных мониторингов\n🔎 Проверить сейчас — проверить только ваши мониторинги вручную\n\nДля расширенных фильтров используйте веб-интерфейс:\n" + APP_BASE_URL, parse_mode="HTML", reply_markup=main_menu())
 
     @dp.message(Command("new"))
     @dp.message(F.text == CREATE_MONITORING_BUTTON)
@@ -179,9 +187,10 @@ def _register_handlers(dp: Dispatcher):
         data = await state.get_data()
         await state.clear()
         status_message = await message.answer("⏳ <b>Мониторинг создан. Проверяю текущие цены...</b>", parse_mode="HTML", reply_markup=main_menu())
+        user = message.from_user
         db = SessionLocal()
         try:
-            route = TrackedRoute(origin=data["origin"], destination=data["destination"], departure_date=data["departure_date"], max_price=data["max_price"], interval_minutes=data["interval_minutes"], direct_only=direct, telegram_chat_id=str(message.chat.id), title=f"{city_label(data['origin'])} → {city_label(data['destination'])} {format_route_date(data['departure_date'])}")
+            route = TrackedRoute(origin=data["origin"], destination=data["destination"], departure_date=data["departure_date"], max_price=data["max_price"], interval_minutes=data["interval_minutes"], direct_only=direct, telegram_chat_id=_chat_id(message), creator_source="telegram", creator_display_name=_creator_display(message), creator_username=(f"@{user.username}" if user and user.username else None), creator_telegram_user_id=(str(user.id) if user else str(message.chat.id)), title=f"{city_label(data['origin'])} → {city_label(data['destination'])} {format_route_date(data['departure_date'])}")
             db.add(route)
             db.commit()
             db.refresh(route)
@@ -212,11 +221,11 @@ def _register_handlers(dp: Dispatcher):
     async def cmd_list(message: Message):
         db = SessionLocal()
         try:
-            routes = db.query(TrackedRoute).filter(TrackedRoute.is_active == True).all()
+            routes = _own_active_routes(db, message)
             if not routes:
-                await message.answer("Нет активных мониторингов. Нажмите «➕ Создать мониторинг».", reply_markup=main_menu())
+                await message.answer("У вас нет активных мониторингов. Нажмите «➕ Создать мониторинг».", reply_markup=main_menu())
                 return
-            await message.answer("📋 <b>Активные мониторинги</b>", parse_mode="HTML", reply_markup=main_menu())
+            await message.answer("📋 <b>Ваши активные мониторинги</b>", parse_mode="HTML", reply_markup=main_menu())
             for route in routes:
                 last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route.id).order_by(PriceCheck.checked_at.desc()).first()
                 await message.answer(_route_card(route, last), parse_mode="HTML", reply_markup=route_actions(route.id))
@@ -241,11 +250,11 @@ def _register_handlers(dp: Dispatcher):
     async def cmd_check(message: Message):
         db = SessionLocal()
         try:
-            routes = db.query(TrackedRoute).filter(TrackedRoute.is_active == True).all()
+            routes = _own_active_routes(db, message)
             if not routes:
-                await message.answer("Нет активных мониторингов", reply_markup=main_menu())
+                await message.answer("У вас нет активных мониторингов", reply_markup=main_menu())
                 return
-            await message.answer(f"🔍 Проверяю {len(routes)} мониторинг(ов)...")
+            await message.answer(f"🔍 Проверяю {len(routes)} ваших мониторинг(ов)...")
             for route in routes:
                 await check_route(route.id)
             await message.answer("✅ Проверка завершена", reply_markup=main_menu())
@@ -255,11 +264,19 @@ def _register_handlers(dp: Dispatcher):
     @dp.callback_query(F.data.startswith("check:"))
     async def cb_check(callback):
         route_id = int(callback.data.split(":", 1)[1])
+        db = SessionLocal()
+        try:
+            route = _get_own_route(db, callback.message, route_id)
+            if not route:
+                await callback.answer("Это не ваш мониторинг или он не найден", show_alert=True)
+                return
+        finally:
+            db.close()
         await callback.answer("Проверяю мониторинг...")
         await check_route(route_id)
         db = SessionLocal()
         try:
-            route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
+            route = _get_own_route(db, callback.message, route_id)
             last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route_id).order_by(PriceCheck.checked_at.desc()).first()
             if route:
                 await callback.message.edit_text(_route_card(route, last), parse_mode="HTML", reply_markup=route_actions(route.id))
@@ -276,9 +293,9 @@ def _register_handlers(dp: Dispatcher):
 async def _stop_route(message: Message, route_id: int):
     db = SessionLocal()
     try:
-        route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
+        route = _get_own_route(db, message, route_id)
         if not route:
-            await message.answer(f"Мониторинг #{route_id} не найден")
+            await message.answer(f"Мониторинг #{route_id} не найден или принадлежит другому пользователю")
             return
         route.is_active = False
         db.commit()
