@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.city_codes import airline_label, airport_label, city_label, resolve_iata
 from app.config import TELEGRAM_BOT_TOKEN
 from app.database import SessionLocal, get_db, init_db
+from app.locations import search_locations
 from app.models import Notification, PriceCheck, TrackedRoute
 from app.scheduler import (
     check_route,
@@ -339,6 +340,11 @@ async def route_delete(route_id: int, db: Session = Depends(get_db)):
 
 
 # ── JSON API ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/locations/search")
+async def api_location_search(q: str = ""):
+    return search_locations(q)
+
 
 @app.get("/api/routes")
 async def api_routes(db: Session = Depends(get_db)):
