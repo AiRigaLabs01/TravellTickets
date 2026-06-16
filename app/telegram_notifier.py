@@ -42,6 +42,10 @@ def _city_label(iata: str) -> str:
     return f"{name} ({iata})" if name else iata
 
 
+def _short_route(route: Any) -> str:
+    return f"{_city_label(route.origin)} → {_city_label(route.destination)}"
+
+
 def build_notification_text(route: Any, flight: dict) -> str:
     dep_dt = flight.get("departure_at")
     arr_dt = flight.get("estimated_arrival_at")
@@ -49,12 +53,10 @@ def build_notification_text(route: Any, flight: dict) -> str:
     arrival_note = ", рассчитано" if flight.get("is_estimated_arrival") else ""
     transfers = flight.get("transfers", 0)
     transfers_str = "нет" if transfers == 0 else str(transfers)
-    origin_city = _city_label(route.origin)
-    dest_city = _city_label(route.destination)
 
     lines = [
         "🔥 <b>Найден билет по вашим условиям</b>\n",
-        f"{origin_city} → {dest_city}",
+        _short_route(route),
         f"{_fmt_date(dep_dt)}\n",
         f"💰 Цена: <b>{int(flight.get('price', 0)):,} ₽</b>".replace(",", "\u00a0"),
         f"✈️ Рейс: {_airline_name(flight.get('airline', ''))} {flight.get('flight_number', '')}",
@@ -77,14 +79,40 @@ def build_notification_text(route: Any, flight: dict) -> str:
     return "\n".join(lines)
 
 
+def build_no_changes_text(route: Any, flights_count: int, filtered_count: int, best_flight: dict | None) -> str:
+    checked_at = datetime.now().strftime("%H:%M")
+    lines = [
+        "✅ <b>Изменений за период не было</b>",
+        f"🔄 Проверено: {checked_at}",
+        f"🛫 Маршрут: {_short_route(route)}",
+        f"📅 Дата: {format_route_date_long(route.departure_date)}",
+        f"⏱ Период: {route.interval_minutes} мин",
+        "",
+        f"Найдено API: {flights_count}",
+        f"После фильтров: {filtered_count}",
+    ]
+    if best_flight:
+        lines.extend([
+            "",
+            "<b>Текущий лучший вариант</b>",
+            f"💵 Цена: {int(best_flight.get('price', 0)):,} ₽".replace(",", " "),
+            f"✈️ Рейс: {best_flight.get('airline', '—')} {best_flight.get('flight_number', '')}",
+            f"🕓 Вылет: {_fmt_dt(best_flight.get('departure_at'))}",
+            f"🕕 Прилёт: {_fmt_dt(best_flight.get('estimated_arrival_at'))}, рассчитано",
+        ])
+    else:
+        lines.append("Подходящих билетов по условиям не найдено.")
+    lines.append("")
+    lines.append("Новых подходящих цен или улучшений не появилось.")
+    return "\n".join(lines)
+
+
 def build_debug_monitoring_text(route: Any, flights_count: int, filtered_count: int, best_flight: dict | None, error: str | None = None) -> str:
     checked_at = datetime.now().strftime("%H:%M:%S")
-    origin_city = _city_label(route.origin)
-    dest_city = _city_label(route.destination)
     lines = [
         "🧪 <b>Отладка мониторинга</b>",
         f"🔄 Проверка выполнена: {checked_at}",
-        f"🛫 Маршрут: {origin_city} → {dest_city}",
+        f"🛫 Маршрут: {_short_route(route)}",
         f"📅 Дата: {format_route_date_long(route.departure_date)}",
         f"💰 Порог: {int(route.max_price):,} ₽".replace(",", " "),
         f"⏱ Интервал: {route.interval_minutes} мин",
