@@ -10,16 +10,11 @@ from app.config import DEBUG_MONITORING_MESSAGES, TELEGRAM_CHAT_ID
 from app.database import SessionLocal
 from app.flight_filters import apply_filters
 from app.models import Notification, PriceCheck, TrackedRoute
-from app.telegram_notifier import (
-    build_debug_monitoring_text,
-    build_notification_text,
-    send_telegram_notification,
-)
+from app.telegram_notifier import build_debug_monitoring_text, build_notification_text, send_telegram_notification
 from app.travelpayouts_client import TravelpayoutsError, search_prices
-from app.yandex_links import build_yandex_travel_url
+from app.yandex_links import build_yandex_travel_url_for_route
 
 logger = logging.getLogger(__name__)
-
 scheduler = AsyncIOScheduler()
 
 
@@ -27,21 +22,9 @@ def _should_notify(route: TrackedRoute, flight: dict, db: Session) -> bool:
     price = flight["price"]
     flight_number = flight.get("flight_number", "")
     airline = flight.get("airline", "")
-
-    existing = (
-        db.query(Notification)
-        .join(PriceCheck)
-        .filter(
-            Notification.tracked_route_id == route.id,
-            PriceCheck.flight_number == flight_number,
-            PriceCheck.airline == airline,
-            PriceCheck.price == price,
-        )
-        .first()
-    )
+    existing = db.query(Notification).join(PriceCheck).filter(Notification.tracked_route_id == route.id, PriceCheck.flight_number == flight_number, PriceCheck.airline == airline, PriceCheck.price == price).first()
     if existing:
         return False
-
     if price <= route.max_price:
         return True
     if route.last_best_price is not None and price < route.last_best_price:
@@ -65,9 +48,7 @@ async def check_route(route_id: int):
         route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
         if not route or not route.is_active:
             return
-
         logger.info(f"Checking route #{route_id}: {route.origin} → {route.destination}")
-
         try:
             flights = await search_prices(route)
         except TravelpayoutsError as e:
@@ -81,18 +62,13 @@ async def check_route(route_id: int):
 
         route.last_error = None
         route.last_checked_at = datetime.utcnow()
-
         filtered = apply_filters(flights, route)
         logger.info(f"Route #{route_id}: {len(flights)} flights found, {len(filtered)} after filters")
-
         best_flight = min(filtered, key=lambda f: f.get("price", 10**12)) if filtered else None
+        yandex_url = build_yandex_travel_url_for_route(route)
 
         for flight in filtered:
-            yandex_url = build_yandex_travel_url(
-                route.origin, route.destination, route.departure_date
-            )
             flight["yandex_travel_url"] = yandex_url
-
             price_check = PriceCheck(
                 tracked_route_id=route.id,
                 checked_at=datetime.utcnow(),
@@ -116,27 +92,17 @@ async def check_route(route_id: int):
             )
             db.add(price_check)
             db.flush()
-
             if _should_notify(route, flight, db):
                 chat_id = route.telegram_chat_id or TELEGRAM_CHAT_ID
                 if chat_id:
                     text = build_notification_text(route, flight)
                     sent = await send_telegram_notification(chat_id, text)
                     if sent:
-                        notif = Notification(
-                            tracked_route_id=route.id,
-                            price_check_id=price_check.id,
-                            channel="telegram",
-                            message=text,
-                        )
-                        db.add(notif)
-
+                        db.add(Notification(tracked_route_id=route.id, price_check_id=price_check.id, channel="telegram", message=text))
             if route.last_best_price is None or flight["price"] < route.last_best_price:
                 route.last_best_price = flight["price"]
-
         db.commit()
         await _send_debug_message(route, len(flights), len(filtered), best_flight)
-
     except Exception as e:
         logger.exception(f"Unexpected error checking route #{route_id}: {e}")
         try:
@@ -151,14 +117,7 @@ def schedule_route(route: TrackedRoute):
     job_id = f"route_{route.id}"
     if scheduler.get_job(job_id):
         scheduler.remove_job(job_id)
-    scheduler.add_job(
-        check_route,
-        trigger=IntervalTrigger(minutes=route.interval_minutes),
-        id=job_id,
-        args=[route.id],
-        replace_existing=True,
-        max_instances=1,
-    )
+    scheduler.add_job(check_route, trigger=IntervalTrigger(minutes=route.interval_minutes), id=job_id, args=[route.id], replace_existing=True, max_instances=1)
     logger.info(f"Scheduled route #{route.id} every {route.interval_minutes} minutes")
 
 
