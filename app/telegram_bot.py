@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message
+from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 
 from app.config import TELEGRAM_BOT_TOKEN, APP_BASE_URL
 from app.database import SessionLocal
@@ -17,6 +17,17 @@ logger = logging.getLogger(__name__)
 
 bot: Bot | None = None
 dp: Dispatcher | None = None
+
+
+def main_menu() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="➕ Новый мониторинг"), KeyboardButton(text="📋 Мои маршруты")],
+            [KeyboardButton(text="🔎 Проверить сейчас"), KeyboardButton(text="❓ Помощь")],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выберите действие",
+    )
 
 
 class NewRouteStates(StatesGroup):
@@ -41,32 +52,30 @@ def _register_handlers(dp: Dispatcher):
     @dp.message(Command("start"))
     async def cmd_start(message: Message):
         await message.answer(
-            "✈️ <b>TravellTickets</b> — мониторинг цен на авиабилеты\n\n"
-            "Команды:\n"
-            "/new — добавить маршрут для мониторинга\n"
-            "/list — список активных маршрутов\n"
-            "/check — проверить все маршруты прямо сейчас\n"
-            "/stop — остановить маршрут\n"
-            "/help — помощь\n\n"
-            f"🌐 Веб-интерфейс: {APP_BASE_URL}",
+            "✈️ <b>TravellTickets</b>\n"
+            "Мониторинг цен на авиабилеты\n\n"
+            "Я помогу найти дешёвый билет и пришлю уведомление, когда цена подойдёт под ваши условия.\n\n"
+            "Выберите действие кнопками ниже.",
             parse_mode="HTML",
+            reply_markup=main_menu(),
         )
 
     @dp.message(Command("help"))
+    @dp.message(F.text == "❓ Помощь")
     async def cmd_help(message: Message):
         await message.answer(
             "📖 <b>Справка</b>\n\n"
-            "/new — добавить базовый маршрут через бот\n"
-            "/list — все активные маршруты\n"
-            "/check — немедленная проверка всех маршрутов\n"
-            "/stop &lt;id&gt; — остановить маршрут по ID\n\n"
-            "Для расширенных фильтров (аэропорт прилёта, авиакомпания, время вылета/прилёта) "
-            "используйте веб-интерфейс:\n"
+            "➕ Новый мониторинг — добавить маршрут\n"
+            "📋 Мои маршруты — список активных маршрутов\n"
+            "🔎 Проверить сейчас — проверить все маршруты вручную\n\n"
+            "Для расширенных фильтров используйте веб-интерфейс:\n"
             f"{APP_BASE_URL}",
             parse_mode="HTML",
+            reply_markup=main_menu(),
         )
 
     @dp.message(Command("new"))
+    @dp.message(F.text == "➕ Новый мониторинг")
     async def cmd_new(message: Message, state: FSMContext):
         await state.set_state(NewRouteStates.origin)
         await message.answer(
@@ -151,17 +160,19 @@ def _register_handlers(dp: Dispatcher):
                 f"Интервал: {route.interval_minutes} мин\n\n"
                 f"Для расширенных фильтров: {APP_BASE_URL}/route/{route.id}/edit",
                 parse_mode=None,
+                reply_markup=main_menu(),
             )
         finally:
             db.close()
 
     @dp.message(Command("list"))
+    @dp.message(F.text == "📋 Мои маршруты")
     async def cmd_list(message: Message):
         db = SessionLocal()
         try:
             routes = db.query(TrackedRoute).filter(TrackedRoute.is_active == True).all()
             if not routes:
-                await message.answer("Нет активных маршрутов. Добавьте через /new")
+                await message.answer("Нет активных маршрутов. Добавьте через /new", reply_markup=main_menu())
                 return
             lines = ["📋 <b>Активные маршруты:</b>\n"]
             for r in routes:
@@ -170,7 +181,7 @@ def _register_handlers(dp: Dispatcher):
                     f"#{r.id} {r.origin}→{r.destination} {r.departure_date} "
                     f"| ≤{int(r.max_price):,}₽ | лучшая: {price_str}"
                 )
-            await message.answer("\n".join(lines), parse_mode="HTML")
+            await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=main_menu())
         finally:
             db.close()
 
@@ -196,21 +207,22 @@ def _register_handlers(dp: Dispatcher):
             db.commit()
             from app.scheduler import unschedule_route
             unschedule_route(route_id)
-            await message.answer(f"⏹ Маршрут #{route_id} остановлен")
+            await message.answer(f"⏹ Маршрут #{route_id} остановлен", reply_markup=main_menu())
         finally:
             db.close()
 
     @dp.message(Command("check"))
+    @dp.message(F.text == "🔎 Проверить сейчас")
     async def cmd_check(message: Message):
         db = SessionLocal()
         try:
             routes = db.query(TrackedRoute).filter(TrackedRoute.is_active == True).all()
             if not routes:
-                await message.answer("Нет активных маршрутов")
+                await message.answer("Нет активных маршрутов", reply_markup=main_menu())
                 return
             await message.answer(f"🔍 Проверяю {len(routes)} маршрут(ов)...")
             for route in routes:
                 await check_route(route.id)
-            await message.answer("✅ Проверка завершена")
+            await message.answer("✅ Проверка завершена", reply_markup=main_menu())
         finally:
             db.close()
