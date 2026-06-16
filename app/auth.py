@@ -62,8 +62,6 @@ def get_session_user(request: Request) -> str | None:
             return None
         if not hmac.compare_digest(_sign(payload), signature):
             return None
-        if not hmac.compare_digest(username, ADMIN_USERNAME):
-            return None
         return username
     except (TypeError, ValueError):
         return None
