@@ -15,6 +15,7 @@ from app.models import PriceCheck, TrackedRoute
 from app.scheduler import check_route, schedule_route
 
 logger = logging.getLogger(__name__)
+CREATE_MONITORING_BUTTON = "➕ Создать мониторинг"
 
 bot: Bot | None = None
 dp: Dispatcher | None = None
@@ -23,7 +24,7 @@ dp: Dispatcher | None = None
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="➕ Новый мониторинг"), KeyboardButton(text="📋 Мои маршруты")],
+            [KeyboardButton(text=CREATE_MONITORING_BUTTON), KeyboardButton(text="📋 Мои мониторинги")],
             [KeyboardButton(text="🔎 Проверить сейчас"), KeyboardButton(text="❓ Помощь")],
         ],
         resize_keyboard=True,
@@ -112,9 +113,10 @@ def _register_handlers(dp: Dispatcher):
     @dp.message(Command("help"))
     @dp.message(F.text == "❓ Помощь")
     async def cmd_help(message: Message):
-        await message.answer("📖 <b>Справка</b>\n\n➕ Новый мониторинг — добавить маршрут\n📋 Мои маршруты — список активных маршрутов\n🔎 Проверить сейчас — проверить все маршруты вручную\n\nДля расширенных фильтров используйте веб-интерфейс:\n" + APP_BASE_URL, parse_mode="HTML", reply_markup=main_menu())
+        await message.answer("📖 <b>Справка</b>\n\n➕ Создать мониторинг — добавить маршрут и условия поиска\n📋 Мои мониторинги — список активных мониторингов\n🔎 Проверить сейчас — проверить все мониторинги вручную\n\nДля расширенных фильтров используйте веб-интерфейс:\n" + APP_BASE_URL, parse_mode="HTML", reply_markup=main_menu())
 
     @dp.message(Command("new"))
+    @dp.message(F.text == CREATE_MONITORING_BUTTON)
     @dp.message(F.text == "➕ Новый мониторинг")
     async def cmd_new(message: Message, state: FSMContext):
         await state.set_state(NewRouteStates.origin)
@@ -205,15 +207,16 @@ def _register_handlers(dp: Dispatcher):
             db.close()
 
     @dp.message(Command("list"))
+    @dp.message(F.text == "📋 Мои мониторинги")
     @dp.message(F.text == "📋 Мои маршруты")
     async def cmd_list(message: Message):
         db = SessionLocal()
         try:
             routes = db.query(TrackedRoute).filter(TrackedRoute.is_active == True).all()
             if not routes:
-                await message.answer("Нет активных маршрутов. Добавьте через /new", reply_markup=main_menu())
+                await message.answer("Нет активных мониторингов. Нажмите «➕ Создать мониторинг».", reply_markup=main_menu())
                 return
-            await message.answer("📋 <b>Активные маршруты</b>", parse_mode="HTML", reply_markup=main_menu())
+            await message.answer("📋 <b>Активные мониторинги</b>", parse_mode="HTML", reply_markup=main_menu())
             for route in routes:
                 last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route.id).order_by(PriceCheck.checked_at.desc()).first()
                 await message.answer(_route_card(route, last), parse_mode="HTML", reply_markup=route_actions(route.id))
@@ -240,9 +243,9 @@ def _register_handlers(dp: Dispatcher):
         try:
             routes = db.query(TrackedRoute).filter(TrackedRoute.is_active == True).all()
             if not routes:
-                await message.answer("Нет активных маршрутов", reply_markup=main_menu())
+                await message.answer("Нет активных мониторингов", reply_markup=main_menu())
                 return
-            await message.answer(f"🔍 Проверяю {len(routes)} маршрут(ов)...")
+            await message.answer(f"🔍 Проверяю {len(routes)} мониторинг(ов)...")
             for route in routes:
                 await check_route(route.id)
             await message.answer("✅ Проверка завершена", reply_markup=main_menu())
@@ -252,7 +255,7 @@ def _register_handlers(dp: Dispatcher):
     @dp.callback_query(F.data.startswith("check:"))
     async def cb_check(callback):
         route_id = int(callback.data.split(":", 1)[1])
-        await callback.answer("Проверяю маршрут...")
+        await callback.answer("Проверяю мониторинг...")
         await check_route(route_id)
         db = SessionLocal()
         try:
@@ -275,12 +278,12 @@ async def _stop_route(message: Message, route_id: int):
     try:
         route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
         if not route:
-            await message.answer(f"Маршрут #{route_id} не найден")
+            await message.answer(f"Мониторинг #{route_id} не найден")
             return
         route.is_active = False
         db.commit()
         from app.scheduler import unschedule_route
         unschedule_route(route_id)
-        await message.answer(f"⏹ Маршрут #{route_id} остановлен", reply_markup=main_menu())
+        await message.answer(f"⏹ Мониторинг #{route_id} остановлен", reply_markup=main_menu())
     finally:
         db.close()
