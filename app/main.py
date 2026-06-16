@@ -70,6 +70,13 @@ def _fmt_time(v):
     return v.strftime("%H:%M")
 
 
+def _creator_label(route):
+    source = getattr(route, "creator_source", None) or "web"
+    if source == "telegram":
+        return getattr(route, "creator_display_name", None) or getattr(route, "creator_username", None) or getattr(route, "creator_telegram_user_id", None) or getattr(route, "telegram_chat_id", None) or "Telegram"
+    return getattr(route, "creator_display_name", None) or "Веб-интерфейс"
+
+
 _jinja_env = Environment(loader=FileSystemLoader("app/templates"), autoescape=True)
 _jinja_env.filters["fmt_price"] = _fmt_price
 _jinja_env.filters["fmt_dt"] = _fmt_dt
@@ -78,6 +85,7 @@ _jinja_env.filters["fmt_route_date"] = format_route_date
 _jinja_env.globals["airline_label"] = airline_label
 _jinja_env.globals["airport_label"] = airport_label
 _jinja_env.globals["city_label"] = city_label
+_jinja_env.globals["creator_label"] = _creator_label
 
 app = FastAPI(title="TravellTickets", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -190,7 +198,7 @@ async def route_new_submit(
     from app.config import TELEGRAM_CHAT_ID
     auto_title = title or f"{city_label(origin_code)} → {city_label(dest_code)} {format_route_date(normalized_date)}"
     route = TrackedRoute(
-        title=auto_title, origin=origin_code, destination=dest_code,
+        title=auto_title, creator_source="web", creator_display_name="Веб-интерфейс", origin=origin_code, destination=dest_code,
         departure_date=normalized_date, return_date=normalized_return_date, trip_type=trip_type,
         adult_seats=adults, children_seats=children, infant_seats=infants, baggage_required=baggage_required,
         max_price=max_price, interval_minutes=interval_minutes, direct_only=direct_only,
@@ -364,7 +372,7 @@ async def api_location_search(q: str = ""):
 @app.get("/api/routes")
 async def api_routes(db: Session = Depends(get_db)):
     routes = db.query(TrackedRoute).all()
-    return [{"id": r.id, "title": r.title, "origin": r.origin, "destination": r.destination, "departure_date": r.departure_date, "return_date": r.return_date, "trip_type": getattr(r, "trip_type", "oneway"), "adult_seats": getattr(r, "adult_seats", 1), "children_seats": getattr(r, "children_seats", 0), "infant_seats": getattr(r, "infant_seats", 0), "baggage_required": getattr(r, "baggage_required", False), "max_price": r.max_price, "is_active": r.is_active, "last_best_price": r.last_best_price, "last_checked_at": r.last_checked_at.isoformat() if r.last_checked_at else None, "last_error": r.last_error} for r in routes]
+    return [{"id": r.id, "title": r.title, "origin": r.origin, "destination": r.destination, "departure_date": r.departure_date, "return_date": r.return_date, "trip_type": getattr(r, "trip_type", "oneway"), "adult_seats": getattr(r, "adult_seats", 1), "children_seats": getattr(r, "children_seats", 0), "infant_seats": getattr(r, "infant_seats", 0), "baggage_required": getattr(r, "baggage_required", False), "creator_source": getattr(r, "creator_source", "web"), "creator": _creator_label(r), "max_price": r.max_price, "is_active": r.is_active, "last_best_price": r.last_best_price, "last_checked_at": r.last_checked_at.isoformat() if r.last_checked_at else None, "last_error": r.last_error} for r in routes]
 
 
 @app.get("/api/routes/{route_id}/checks")
