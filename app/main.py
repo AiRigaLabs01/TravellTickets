@@ -102,6 +102,17 @@ def _reset_route_results(db: Session, route: TrackedRoute):
     route.last_error = None
 
 
+def _passenger_count(value: int | None, default: int = 0, min_value: int = 0, max_value: int = 9) -> int:
+    try:
+        return max(min(int(value if value is not None else default), max_value), min_value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _route_form_context(route=None, errors=None, origin_display="", dest_display=""):
+    return {"route": route, "errors": errors or [], "origin_display": origin_display, "dest_display": dest_display, "today": date.today().isoformat()}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, db: Session = Depends(get_db)):
     routes = db.query(TrackedRoute).order_by(TrackedRoute.created_at.desc()).all()
@@ -117,7 +128,7 @@ async def index(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/route/new", response_class=HTMLResponse)
 async def route_new_form(request: Request):
-    return _tr(request, "route_form.html", {"route": None, "errors": [], "origin_display": "", "dest_display": "", "today": date.today().isoformat()})
+    return _tr(request, "route_form.html", _route_form_context())
 
 
 @app.post("/route/new")
@@ -129,6 +140,12 @@ async def route_new_submit(
     origin_input: Optional[str] = Form(None),
     destination_input: Optional[str] = Form(None),
     departure_date: str = Form(...),
+    trip_type: str = Form("oneway"),
+    return_date: Optional[str] = Form(None),
+    adult_seats: int = Form(1),
+    children_seats: int = Form(0),
+    infant_seats: int = Form(0),
+    baggage_required: bool = Form(False),
     max_price: float = Form(...),
     interval_minutes: int = Form(10),
     direct_only: bool = Form(False),
@@ -139,43 +156,49 @@ async def route_new_submit(
     departure_time_to: Optional[str] = Form(None),
     arrival_time_from: Optional[str] = Form(None),
     arrival_time_to: Optional[str] = Form(None),
+    return_departure_time_from: Optional[str] = Form(None),
+    return_departure_time_to: Optional[str] = Form(None),
+    return_arrival_time_from: Optional[str] = Form(None),
+    return_arrival_time_to: Optional[str] = Form(None),
     telegram_chat_id: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     origin_code = resolve_iata(origin) if origin else ""
     dest_code = resolve_iata(destination) if destination else ""
     normalized_date = parse_route_date(departure_date)
+    trip_type = "roundtrip" if trip_type == "roundtrip" else "oneway"
+    normalized_return_date = parse_route_date(return_date) if trip_type == "roundtrip" else None
+    adults = _passenger_count(adult_seats, 1, 1)
+    children = _passenger_count(children_seats, 0)
+    infants = _passenger_count(infant_seats, 0)
     errors = []
     if not origin_code or len(origin_code) != 3:
-        errors.append(f"Не удалось определить аэропорт вылета: «{origin_input or origin}». Введите название города или IATA-код (3 буквы).")
+        errors.append(f"Не удалось определить аэропорт вылета: «{origin_input or origin}».")
     if not dest_code or len(dest_code) != 3:
-        errors.append(f"Не удалось определить аэропорт назначения: «{destination_input or destination}». Введите название города или IATA-код.")
+        errors.append(f"Не удалось определить аэропорт назначения: «{destination_input or destination}».")
     if not normalized_date:
         errors.append("Введите дату вылета в формате ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.")
+    if trip_type == "roundtrip" and not normalized_return_date:
+        errors.append("Для маршрута туда-обратно укажите дату обратного вылета.")
     if max_price <= 0:
         errors.append("Максимальная цена должна быть больше нуля.")
     if interval_minutes not in (5, 10):
         interval_minutes = 10
     if errors:
-        return _tr(request, "route_form.html", {"route": None, "errors": errors, "origin_display": origin_input or origin, "dest_display": destination_input or destination, "today": date.today().isoformat()})
+        return _tr(request, "route_form.html", _route_form_context(None, errors, origin_input or origin, destination_input or destination))
 
     from app.config import TELEGRAM_CHAT_ID
     auto_title = title or f"{city_label(origin_code)} → {city_label(dest_code)} {format_route_date(normalized_date)}"
     route = TrackedRoute(
-        title=auto_title,
-        origin=origin_code,
-        destination=dest_code,
-        departure_date=normalized_date,
-        max_price=max_price,
-        interval_minutes=interval_minutes,
-        direct_only=direct_only,
-        airline_codes=airline_codes or None,
-        origin_airports=origin_airports or None,
-        destination_airports=destination_airports or None,
-        departure_time_from=departure_time_from or None,
-        departure_time_to=departure_time_to or None,
-        arrival_time_from=arrival_time_from or None,
-        arrival_time_to=arrival_time_to or None,
+        title=auto_title, origin=origin_code, destination=dest_code,
+        departure_date=normalized_date, return_date=normalized_return_date, trip_type=trip_type,
+        adult_seats=adults, children_seats=children, infant_seats=infants, baggage_required=baggage_required,
+        max_price=max_price, interval_minutes=interval_minutes, direct_only=direct_only,
+        airline_codes=airline_codes or None, origin_airports=origin_airports or None, destination_airports=destination_airports or None,
+        departure_time_from=departure_time_from or None, departure_time_to=departure_time_to or None,
+        arrival_time_from=arrival_time_from or None, arrival_time_to=arrival_time_to or None,
+        return_departure_time_from=return_departure_time_from or None, return_departure_time_to=return_departure_time_to or None,
+        return_arrival_time_from=return_arrival_time_from or None, return_arrival_time_to=return_arrival_time_to or None,
         telegram_chat_id=telegram_chat_id or TELEGRAM_CHAT_ID or None,
     )
     db.add(route)
@@ -202,7 +225,7 @@ async def route_edit_form(request: Request, route_id: int, db: Session = Depends
     if not route:
         raise HTTPException(status_code=404, detail="Маршрут не найден")
     _enrich_route(route)
-    return _tr(request, "route_form.html", {"route": route, "errors": [], "origin_display": city_label(route.origin), "dest_display": city_label(route.destination), "today": date.today().isoformat()})
+    return _tr(request, "route_form.html", _route_form_context(route, [], city_label(route.origin), city_label(route.destination)))
 
 
 @app.post("/route/{route_id}/edit")
@@ -215,6 +238,12 @@ async def route_edit_submit(
     origin_input: Optional[str] = Form(None),
     destination_input: Optional[str] = Form(None),
     departure_date: str = Form(...),
+    trip_type: str = Form("oneway"),
+    return_date: Optional[str] = Form(None),
+    adult_seats: int = Form(1),
+    children_seats: int = Form(0),
+    infant_seats: int = Form(0),
+    baggage_required: bool = Form(False),
     max_price: float = Form(...),
     interval_minutes: int = Form(10),
     direct_only: bool = Form(False),
@@ -225,16 +254,24 @@ async def route_edit_submit(
     departure_time_to: Optional[str] = Form(None),
     arrival_time_from: Optional[str] = Form(None),
     arrival_time_to: Optional[str] = Form(None),
+    return_departure_time_from: Optional[str] = Form(None),
+    return_departure_time_to: Optional[str] = Form(None),
+    return_arrival_time_from: Optional[str] = Form(None),
+    return_arrival_time_to: Optional[str] = Form(None),
     telegram_chat_id: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
     if not route:
         raise HTTPException(status_code=404, detail="Маршрут не найден")
-
     origin_code = resolve_iata(origin) if origin else ""
     dest_code = resolve_iata(destination) if destination else ""
     normalized_date = parse_route_date(departure_date)
+    trip_type = "roundtrip" if trip_type == "roundtrip" else "oneway"
+    normalized_return_date = parse_route_date(return_date) if trip_type == "roundtrip" else None
+    adults = _passenger_count(adult_seats, 1, 1)
+    children = _passenger_count(children_seats, 0)
+    infants = _passenger_count(infant_seats, 0)
     errors = []
     if not origin_code or len(origin_code) != 3:
         errors.append(f"Не удалось определить аэропорт вылета: «{origin_input or origin}».")
@@ -242,19 +279,26 @@ async def route_edit_submit(
         errors.append(f"Не удалось определить аэропорт назначения: «{destination_input or destination}».")
     if not normalized_date:
         errors.append("Введите дату вылета в формате ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.")
+    if trip_type == "roundtrip" and not normalized_return_date:
+        errors.append("Для маршрута туда-обратно укажите дату обратного вылета.")
     if max_price <= 0:
         errors.append("Максимальная цена должна быть больше нуля.")
     if errors:
         _enrich_route(route)
-        return _tr(request, "route_form.html", {"route": route, "errors": errors, "origin_display": origin_input or origin, "dest_display": destination_input or destination, "today": date.today().isoformat()})
+        return _tr(request, "route_form.html", _route_form_context(route, errors, origin_input or origin, destination_input or destination))
 
-    route_changed = (route.origin != origin_code or route.destination != dest_code or route.departure_date != normalized_date)
+    route_changed = (route.origin != origin_code or route.destination != dest_code or route.departure_date != normalized_date or route.return_date != normalized_return_date or getattr(route, "trip_type", "oneway") != trip_type)
     if route_changed:
         _reset_route_results(db, route)
-
     route.origin = origin_code
     route.destination = dest_code
     route.departure_date = normalized_date
+    route.return_date = normalized_return_date
+    route.trip_type = trip_type
+    route.adult_seats = adults
+    route.children_seats = children
+    route.infant_seats = infants
+    route.baggage_required = baggage_required
     route.title = title or f"{city_label(origin_code)} → {city_label(dest_code)} {format_route_date(normalized_date)}"
     route.max_price = max_price
     route.interval_minutes = interval_minutes if interval_minutes in (5, 10) else 10
@@ -266,6 +310,10 @@ async def route_edit_submit(
     route.departure_time_to = departure_time_to or None
     route.arrival_time_from = arrival_time_from or None
     route.arrival_time_to = arrival_time_to or None
+    route.return_departure_time_from = return_departure_time_from or None
+    route.return_departure_time_to = return_departure_time_to or None
+    route.return_arrival_time_from = return_arrival_time_from or None
+    route.return_arrival_time_to = return_arrival_time_to or None
     if telegram_chat_id:
         route.telegram_chat_id = telegram_chat_id
     db.commit()
@@ -316,7 +364,7 @@ async def api_location_search(q: str = ""):
 @app.get("/api/routes")
 async def api_routes(db: Session = Depends(get_db)):
     routes = db.query(TrackedRoute).all()
-    return [{"id": r.id, "title": r.title, "origin": r.origin, "destination": r.destination, "departure_date": r.departure_date, "max_price": r.max_price, "is_active": r.is_active, "last_best_price": r.last_best_price, "last_checked_at": r.last_checked_at.isoformat() if r.last_checked_at else None, "last_error": r.last_error} for r in routes]
+    return [{"id": r.id, "title": r.title, "origin": r.origin, "destination": r.destination, "departure_date": r.departure_date, "return_date": r.return_date, "trip_type": getattr(r, "trip_type", "oneway"), "adult_seats": getattr(r, "adult_seats", 1), "children_seats": getattr(r, "children_seats", 0), "infant_seats": getattr(r, "infant_seats", 0), "baggage_required": getattr(r, "baggage_required", False), "max_price": r.max_price, "is_active": r.is_active, "last_best_price": r.last_best_price, "last_checked_at": r.last_checked_at.isoformat() if r.last_checked_at else None, "last_error": r.last_error} for r in routes]
 
 
 @app.get("/api/routes/{route_id}/checks")
