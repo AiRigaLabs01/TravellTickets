@@ -45,6 +45,7 @@ def _ensure_tracked_route_columns():
         "return_departure_time_to": "VARCHAR",
         "return_arrival_time_from": "VARCHAR",
         "return_arrival_time_to": "VARCHAR",
+        "no_change_checks_count": "INTEGER DEFAULT 0",
     }
     with engine.begin() as conn:
         for name, ddl in columns.items():
