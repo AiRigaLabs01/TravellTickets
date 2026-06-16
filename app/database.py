@@ -20,18 +20,23 @@ def get_db():
         db.close()
 
 
+def _is_postgres() -> bool:
+    return engine.dialect.name.startswith("postgres")
+
+
 def _ensure_tracked_route_columns():
     """Small MVP migration helper for SQLite/Postgres-like dev DBs without Alembic."""
     inspector = inspect(engine)
     if "tracked_routes" not in inspector.get_table_names():
         return
     existing = {c["name"] for c in inspector.get_columns("tracked_routes")}
+    boolean_default = "BOOLEAN DEFAULT false" if _is_postgres() else "BOOLEAN DEFAULT 0"
     columns = {
         "trip_type": "VARCHAR DEFAULT 'oneway'",
         "adult_seats": "INTEGER DEFAULT 1",
         "children_seats": "INTEGER DEFAULT 0",
         "infant_seats": "INTEGER DEFAULT 0",
-        "baggage_required": "BOOLEAN DEFAULT 0",
+        "baggage_required": boolean_default,
         "return_departure_time_from": "VARCHAR",
         "return_departure_time_to": "VARCHAR",
         "return_arrival_time_from": "VARCHAR",
