@@ -10,7 +10,12 @@ from app.config import DEBUG_MONITORING_MESSAGES, TELEGRAM_CHAT_ID
 from app.database import SessionLocal
 from app.flight_filters import apply_filters
 from app.models import Notification, PriceCheck, TrackedRoute
-from app.telegram_notifier import build_debug_monitoring_text, build_notification_text, send_telegram_notification
+from app.telegram_notifier import (
+    build_debug_monitoring_text,
+    build_no_changes_text,
+    build_notification_text,
+    send_telegram_notification,
+)
 from app.travelpayouts_client import TravelpayoutsError, search_prices
 from app.yandex_links import build_yandex_travel_url_for_route
 
@@ -42,6 +47,14 @@ async def _send_debug_message(route: TrackedRoute, flights_count: int, filtered_
     await send_telegram_notification(chat_id, text)
 
 
+async def _send_no_changes_message(route: TrackedRoute, flights_count: int, filtered_count: int, best_flight: dict | None):
+    chat_id = route.telegram_chat_id or TELEGRAM_CHAT_ID
+    if not chat_id:
+        return
+    text = build_no_changes_text(route, flights_count, filtered_count, best_flight)
+    await send_telegram_notification(chat_id, text)
+
+
 async def check_route(route_id: int):
     db: Session = SessionLocal()
     try:
@@ -66,6 +79,7 @@ async def check_route(route_id: int):
         logger.info(f"Route #{route_id}: {len(flights)} flights found, {len(filtered)} after filters")
         best_flight = min(filtered, key=lambda f: f.get("price", 10**12)) if filtered else None
         yandex_url = build_yandex_travel_url_for_route(route)
+        notification_sent = False
 
         for flight in filtered:
             flight["yandex_travel_url"] = yandex_url
@@ -98,10 +112,13 @@ async def check_route(route_id: int):
                     text = build_notification_text(route, flight)
                     sent = await send_telegram_notification(chat_id, text)
                     if sent:
+                        notification_sent = True
                         db.add(Notification(tracked_route_id=route.id, price_check_id=price_check.id, channel="telegram", message=text))
             if route.last_best_price is None or flight["price"] < route.last_best_price:
                 route.last_best_price = flight["price"]
         db.commit()
+        if not notification_sent:
+            await _send_no_changes_message(route, len(flights), len(filtered), best_flight)
         await _send_debug_message(route, len(flights), len(filtered), best_flight)
     except Exception as e:
         logger.exception(f"Unexpected error checking route #{route_id}: {e}")
