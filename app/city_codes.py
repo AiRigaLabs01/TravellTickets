@@ -1,7 +1,10 @@
 CITY_TO_IATA: dict[str, str] = {
     "екатеринбург": "SVX",
+    "екат": "SVX",
+    "ебург": "SVX",
     "свердловск": "SVX",
     "москва": "MOW",
+    "моск": "MOW",
     "мск": "MOW",
     "санкт-петербург": "LED",
     "питер": "LED",
@@ -112,7 +115,7 @@ def resolve_iata(value: str) -> str:
     v = value.strip()
     if len(v) == 3 and v.isalpha():
         return v.upper()
-    lookup = v.lower()
+    lookup = v.lower().replace("ё", "е")
     return CITY_TO_IATA.get(lookup, v.upper())
 
 
