@@ -32,6 +32,15 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
+def one_time_keyboard(rows: list[list[str]], placeholder: str = "Выберите вариант") -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=item) for item in row] for row in rows],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+        input_field_placeholder=placeholder,
+    )
+
+
 def _is_public_app_url() -> bool:
     base = (APP_BASE_URL or "").strip().lower()
     return base.startswith(("http://", "https://")) and not any(host in base for host in ("localhost", "127.0.0.1", "0.0.0.0"))
@@ -72,6 +81,7 @@ def route_actions(route_id: int) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="✏️ Изменить", url=f"{APP_BASE_URL}/route/{route_id}/edit"), InlineKeyboardButton(text="⏸ Остановить", callback_data=f"stop:{route_id}")])
     else:
         rows.append([InlineKeyboardButton(text="⏸ Остановить", callback_data=f"stop:{route_id}")])
+    rows.append([InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete:{route_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -88,6 +98,43 @@ def _resolve_city_input(value: str) -> str | None:
     return None
 
 
+def _parse_passengers(text: str) -> tuple[int, int, int] | None:
+    normalized = (text or "").strip().lower()
+    presets = {
+        "1 взрослый": (1, 0, 0),
+        "2 взрослых": (2, 0, 0),
+        "1 взрослый + 1 ребёнок": (1, 1, 0),
+        "1 взрослый + 1 ребенок": (1, 1, 0),
+        "2 взрослых + 1 ребёнок": (2, 1, 0),
+        "2 взрослых + 1 ребенок": (2, 1, 0),
+    }
+    if normalized in presets:
+        return presets[normalized]
+    cleaned = normalized.replace(" ", "").replace(";", ",").replace("/", ",")
+    parts = cleaned.split(",")
+    if len(parts) != 3:
+        return None
+    try:
+        adults, children, infants = [int(p) for p in parts]
+    except ValueError:
+        return None
+    if adults < 1 or adults > 9 or children < 0 or infants < 0 or adults + children + infants > 9:
+        return None
+    return adults, children, infants
+
+
+def _passengers_text(route: TrackedRoute) -> str:
+    adults = getattr(route, "adult_seats", 1) or 1
+    children = getattr(route, "children_seats", 0) or 0
+    infants = getattr(route, "infant_seats", 0) or 0
+    parts = [f"{adults} взр."]
+    if children:
+        parts.append(f"{children} дет.")
+    if infants:
+        parts.append(f"{infants} млад.")
+    return ", ".join(parts)
+
+
 def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> str:
     filters = []
     if route.direct_only:
@@ -99,9 +146,15 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
     if getattr(route, "baggage_required", False):
         filters.append("нужен багаж")
     filter_text = ", ".join(filters) if filters else "без доп. фильтров"
+    trip_line = "туда-обратно" if getattr(route, "trip_type", "oneway") == "roundtrip" else "только туда"
+    if getattr(route, "return_date", None):
+        trip_line += f", обратно {format_route_date_long(route.return_date)}"
     lines = [
         f"🛫 <b>{city_label(route.origin)} → {city_label(route.destination)}</b>",
         f"📅 {format_route_date_long(route.departure_date)}",
+        f"🔁 Тип: {trip_line}",
+        f"👥 Пассажиры: {_passengers_text(route)}",
+        f"🧳 Багаж: {'нужен' if getattr(route, 'baggage_required', False) else 'не нужен'}",
         f"💰 До {_fmt_price(route.max_price)}",
         f"👤 Автор: {route.creator_display_name or route.telegram_chat_id or 'Telegram'}",
         f"⏱ Проверка: каждые {route.interval_minutes} минут",
@@ -121,7 +174,11 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
 class NewRouteStates(StatesGroup):
     origin = State()
     destination = State()
+    trip_type = State()
     departure_date = State()
+    return_date = State()
+    passengers = State()
+    baggage = State()
     max_price = State()
     interval = State()
     direct_only = State()
@@ -170,8 +227,16 @@ def _register_handlers(dp: Dispatcher):
             await message.answer("Не понял город назначения. Введите, например: <b>Москва</b>, <b>Моск</b> или <b>MOW</b>", parse_mode="HTML")
             return
         await state.update_data(destination=code)
+        await state.set_state(NewRouteStates.trip_type)
+        await message.answer(f"Выбрано: <b>{city_label(code)} / {code}</b>\n\nВыберите тип перелёта:", parse_mode="HTML", reply_markup=one_time_keyboard([["Только туда", "Туда-обратно"]]))
+
+    @dp.message(NewRouteStates.trip_type)
+    async def process_trip_type(message: Message, state: FSMContext):
+        txt = (message.text or "").strip().lower()
+        is_roundtrip = txt in ("туда-обратно", "обратно", "roundtrip", "rt")
+        await state.update_data(trip_type="roundtrip" if is_roundtrip else "oneway")
         await state.set_state(NewRouteStates.departure_date)
-        await message.answer(f"Выбрано: <b>{city_label(code)} / {code}</b>\n\nВведите дату вылета: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML")
+        await message.answer("Введите дату вылета туда: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML")
 
     @dp.message(NewRouteStates.departure_date)
     async def process_departure_date(message: Message, state: FSMContext):
@@ -180,8 +245,43 @@ def _register_handlers(dp: Dispatcher):
             await message.answer("Неверный формат. Введите дату как <b>21.06.2026</b> или <b>2026-06-21</b>:", parse_mode="HTML")
             return
         await state.update_data(departure_date=normalized_date)
+        data = await state.get_data()
+        if data.get("trip_type") == "roundtrip":
+            await state.set_state(NewRouteStates.return_date)
+            await message.answer("Введите дату обратного вылета: <b>28.06.2026</b> или <b>2026-06-28</b>", parse_mode="HTML")
+        else:
+            await state.update_data(return_date=None)
+            await state.set_state(NewRouteStates.passengers)
+            await message.answer("Выберите пассажиров или введите вручную в формате <b>взрослые,дети,младенцы</b> — например <b>2,1,0</b>", parse_mode="HTML", reply_markup=one_time_keyboard([["1 взрослый", "2 взрослых"], ["1 взрослый + 1 ребёнок", "2 взрослых + 1 ребёнок"]]))
+
+    @dp.message(NewRouteStates.return_date)
+    async def process_return_date(message: Message, state: FSMContext):
+        normalized_date = parse_route_date(message.text)
+        if not normalized_date:
+            await message.answer("Неверный формат. Введите дату обратно как <b>28.06.2026</b> или <b>2026-06-28</b>:", parse_mode="HTML")
+            return
+        await state.update_data(return_date=normalized_date)
+        await state.set_state(NewRouteStates.passengers)
+        await message.answer("Выберите пассажиров или введите вручную в формате <b>взрослые,дети,младенцы</b> — например <b>2,1,0</b>", parse_mode="HTML", reply_markup=one_time_keyboard([["1 взрослый", "2 взрослых"], ["1 взрослый + 1 ребёнок", "2 взрослых + 1 ребёнок"]]))
+
+    @dp.message(NewRouteStates.passengers)
+    async def process_passengers(message: Message, state: FSMContext):
+        parsed = _parse_passengers(message.text)
+        if not parsed:
+            await message.answer("Не понял количество пассажиров. Выберите кнопку или введите так: <b>2,1,0</b> — взрослые, дети, младенцы", parse_mode="HTML")
+            return
+        adults, children, infants = parsed
+        await state.update_data(adult_seats=adults, children_seats=children, infant_seats=infants)
+        await state.set_state(NewRouteStates.baggage)
+        await message.answer("Нужен багаж?", reply_markup=one_time_keyboard([["Без багажа", "Нужен багаж"]]))
+
+    @dp.message(NewRouteStates.baggage)
+    async def process_baggage(message: Message, state: FSMContext):
+        txt = (message.text or "").strip().lower()
+        baggage = txt in ("нужен багаж", "багаж", "да", "yes", "y", "1", "true")
+        await state.update_data(baggage_required=baggage)
         await state.set_state(NewRouteStates.max_price)
-        await message.answer(f"Дата: <b>{format_route_date(normalized_date)}</b>\n\nМаксимальная цена (₽), например: <b>5000</b>:", parse_mode="HTML")
+        await message.answer("Максимальная цена (₽), например: <b>5000</b>:", parse_mode="HTML")
 
     @dp.message(NewRouteStates.max_price)
     async def process_max_price(message: Message, state: FSMContext):
@@ -192,7 +292,7 @@ def _register_handlers(dp: Dispatcher):
             return
         await state.update_data(max_price=price)
         await state.set_state(NewRouteStates.interval)
-        await message.answer("Интервал проверки: <b>5</b> или <b>10</b> минут?", parse_mode="HTML")
+        await message.answer("Интервал проверки: <b>5</b> или <b>10</b> минут?", parse_mode="HTML", reply_markup=one_time_keyboard([["5", "10"]]))
 
     @dp.message(NewRouteStates.interval)
     async def process_interval(message: Message, state: FSMContext):
@@ -202,7 +302,7 @@ def _register_handlers(dp: Dispatcher):
             return
         await state.update_data(interval_minutes=int(txt))
         await state.set_state(NewRouteStates.direct_only)
-        await message.answer("Только прямые рейсы? <b>да</b> / <b>нет</b>", parse_mode="HTML")
+        await message.answer("Только прямые рейсы?", reply_markup=one_time_keyboard([["Да", "Нет"]]))
 
     @dp.message(NewRouteStates.direct_only)
     async def process_direct_only(message: Message, state: FSMContext):
@@ -213,10 +313,10 @@ def _register_handlers(dp: Dispatcher):
         db = SessionLocal()
         try:
             route = TrackedRoute(
-                origin=data["origin"], destination=data["destination"], departure_date=data["departure_date"],
+                origin=data["origin"], destination=data["destination"], departure_date=data["departure_date"], return_date=data.get("return_date"), trip_type=data.get("trip_type", "oneway"),
+                adult_seats=data.get("adult_seats", 1), children_seats=data.get("children_seats", 0), infant_seats=data.get("infant_seats", 0), baggage_required=data.get("baggage_required", False),
                 max_price=data["max_price"], interval_minutes=data["interval_minutes"], direct_only=direct,
-                telegram_chat_id=_chat_id(message), creator_source="telegram", creator_display_name=_creator_name(message),
-                creator_username=_creator_username(message), creator_telegram_user_id=_creator_user_id(message),
+                telegram_chat_id=_chat_id(message), creator_source="telegram", creator_display_name=_creator_name(message), creator_username=_creator_username(message), creator_telegram_user_id=_creator_user_id(message),
                 title=f"{city_label(data['origin'])} → {city_label(data['destination'])} {format_route_date(data['departure_date'])}",
             )
             db.add(route)
@@ -273,6 +373,19 @@ def _register_handlers(dp: Dispatcher):
             return
         await _stop_route(message, route_id)
 
+    @dp.message(Command("delete"))
+    async def cmd_delete(message: Message):
+        parts = message.text.split()
+        if len(parts) < 2:
+            await message.answer("Использование: /delete &lt;id&gt;\nПример: /delete 1", parse_mode="HTML")
+            return
+        try:
+            route_id = int(parts[1])
+        except ValueError:
+            await message.answer("ID должен быть числом")
+            return
+        await _delete_route(message, route_id)
+
     @dp.message(Command("check"))
     @dp.message(F.text == "🔎 Проверить сейчас")
     async def cmd_check(message: Message):
@@ -318,6 +431,12 @@ def _register_handlers(dp: Dispatcher):
         await callback.answer("Останавливаю мониторинг...")
         await _stop_route(callback.message, route_id)
 
+    @dp.callback_query(F.data.startswith("delete:"))
+    async def cb_delete(callback):
+        route_id = int(callback.data.split(":", 1)[1])
+        await callback.answer("Удаляю мониторинг...")
+        await _delete_route(callback.message, route_id)
+
 
 async def _stop_route(message: Message, route_id: int):
     db = SessionLocal()
@@ -331,5 +450,21 @@ async def _stop_route(message: Message, route_id: int):
         from app.scheduler import unschedule_route
         unschedule_route(route_id)
         await message.answer(f"⏹ Мониторинг #{route_id} остановлен", reply_markup=main_menu())
+    finally:
+        db.close()
+
+
+async def _delete_route(message: Message, route_id: int):
+    db = SessionLocal()
+    try:
+        route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id, TrackedRoute.telegram_chat_id == _chat_id(message)).first()
+        if not route:
+            await message.answer(f"Мониторинг #{route_id} не найден среди ваших мониторингов")
+            return
+        from app.scheduler import unschedule_route
+        unschedule_route(route_id)
+        db.delete(route)
+        db.commit()
+        await message.answer(f"🗑 Мониторинг #{route_id} удалён", reply_markup=main_menu())
     finally:
         db.close()
