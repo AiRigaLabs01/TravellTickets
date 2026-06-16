@@ -6,7 +6,13 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
 
 from app.city_codes import city_label
 from app.config import TELEGRAM_BOT_TOKEN, APP_BASE_URL
@@ -29,6 +35,19 @@ def main_menu() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         input_field_placeholder="Выберите действие",
     )
+
+
+def route_actions(route_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔎 Проверить сейчас", callback_data=f"check:{route_id}"),
+            InlineKeyboardButton(text="📈 История", url=f"{APP_BASE_URL}/route/{route_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="✏️ Изменить", url=f"{APP_BASE_URL}/route/{route_id}/edit"),
+            InlineKeyboardButton(text="⏸ Остановить", callback_data=f"stop:{route_id}"),
+        ],
+    ])
 
 
 def _fmt_price(value) -> str:
@@ -73,10 +92,6 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
     else:
         lines.extend(["", "<b>Текущая проверка</b>", "Пока нет данных. Проверка могла не найти билетов по условиям или API ещё не вернул результат."])
 
-    lines.append("")
-    lines.append(f"Открыть текущие цены: {APP_BASE_URL}/route/{route.id}")
-    lines.append(f"Изменить фильтры: {APP_BASE_URL}/route/{route.id}/edit")
-    lines.append(f"Остановить: /stop {route.id}")
     return "\n".join(lines)
 
 
@@ -216,6 +231,7 @@ def _register_handlers(dp: Dispatcher):
                 + _route_card(route)
                 + f"\n\n⚠️ Не удалось сразу проверить цены: {exc}",
                 parse_mode="HTML",
+                reply_markup=route_actions(route.id),
             )
             return
 
@@ -231,6 +247,7 @@ def _register_handlers(dp: Dispatcher):
             await status_message.edit_text(
                 "✅ <b>Мониторинг создан</b>\n\n" + _route_card(route, last),
                 parse_mode="HTML",
+                reply_markup=route_actions(route.id),
             )
         finally:
             db.close()
@@ -252,7 +269,11 @@ def _register_handlers(dp: Dispatcher):
                     .order_by(PriceCheck.checked_at.desc())
                     .first()
                 )
-                await message.answer(_route_card(route, last), parse_mode="HTML")
+                await message.answer(
+                    _route_card(route, last),
+                    parse_mode="HTML",
+                    reply_markup=route_actions(route.id),
+                )
         finally:
             db.close()
 
@@ -267,20 +288,7 @@ def _register_handlers(dp: Dispatcher):
         except ValueError:
             await message.answer("ID должен быть числом")
             return
-
-        db = SessionLocal()
-        try:
-            route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
-            if not route:
-                await message.answer(f"Маршрут #{route_id} не найден")
-                return
-            route.is_active = False
-            db.commit()
-            from app.scheduler import unschedule_route
-            unschedule_route(route_id)
-            await message.answer(f"⏹ Маршрут #{route_id} остановлен", reply_markup=main_menu())
-        finally:
-            db.close()
+        await _stop_route(message, route_id)
 
     @dp.message(Command("check"))
     @dp.message(F.text == "🔎 Проверить сейчас")
@@ -297,3 +305,49 @@ def _register_handlers(dp: Dispatcher):
             await message.answer("✅ Проверка завершена", reply_markup=main_menu())
         finally:
             db.close()
+
+    @dp.callback_query(F.data.startswith("check:"))
+    async def cb_check(callback):
+        route_id = int(callback.data.split(":", 1)[1])
+        await callback.answer("Проверяю маршрут...")
+        await check_route(route_id)
+
+        db = SessionLocal()
+        try:
+            route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
+            last = (
+                db.query(PriceCheck)
+                .filter(PriceCheck.tracked_route_id == route_id)
+                .order_by(PriceCheck.checked_at.desc())
+                .first()
+            )
+            if route:
+                await callback.message.edit_text(
+                    _route_card(route, last),
+                    parse_mode="HTML",
+                    reply_markup=route_actions(route.id),
+                )
+        finally:
+            db.close()
+
+    @dp.callback_query(F.data.startswith("stop:"))
+    async def cb_stop(callback):
+        route_id = int(callback.data.split(":", 1)[1])
+        await callback.answer("Останавливаю мониторинг...")
+        await _stop_route(callback.message, route_id)
+
+
+async def _stop_route(message: Message, route_id: int):
+    db = SessionLocal()
+    try:
+        route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
+        if not route:
+            await message.answer(f"Маршрут #{route_id} не найден")
+            return
+        route.is_active = False
+        db.commit()
+        from app.scheduler import unschedule_route
+        unschedule_route(route_id)
+        await message.answer(f"⏹ Маршрут #{route_id} остановлен", reply_markup=main_menu())
+    finally:
+        db.close()
