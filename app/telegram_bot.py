@@ -178,6 +178,18 @@ async def _send_route_created_message(message: Message, route: TrackedRoute, rou
     await message.answer(text, parse_mode="HTML", reply_markup=route_actions(route_id))
 
 
+async def _send_checked_route_message(message: Message, route_id: int):
+    db = SessionLocal()
+    try:
+        route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id, TrackedRoute.telegram_chat_id == _chat_id(message)).first()
+        if not route:
+            return
+        last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route_id).order_by(PriceCheck.checked_at.desc()).first()
+        await message.answer("📊 <b>Результат ручной проверки</b>\n\n" + _route_card(route, last), parse_mode="HTML", reply_markup=route_actions(route.id))
+    finally:
+        db.close()
+
+
 class NewRouteStates(StatesGroup):
     origin = State()
     destination = State()
@@ -402,12 +414,20 @@ def _register_handlers(dp: Dispatcher):
             if not routes:
                 await message.answer("Нет активных мониторингов", reply_markup=main_menu())
                 return
-            await message.answer(f"🔍 Проверяю {len(routes)} ваш(их) мониторинг(ов)...")
-            for route in routes:
-                await check_route(route.id)
-            await message.answer("✅ Проверка завершена", reply_markup=main_menu())
+            route_ids = [route.id for route in routes]
         finally:
             db.close()
+
+        await message.answer(f"🔍 Проверяю {len(route_ids)} ваш(их) мониторинг(ов)...")
+        for route_id in route_ids:
+            try:
+                await check_route(route_id)
+            except Exception as exc:
+                logger.exception("Manual route check failed")
+                await message.answer(f"⚠️ Ошибка при проверке мониторинга #{route_id}: {exc}", reply_markup=main_menu())
+                continue
+            await _send_checked_route_message(message, route_id)
+        await message.answer("✅ Проверка завершена", reply_markup=main_menu())
 
     @dp.callback_query(F.data.startswith("check:"))
     async def cb_check(callback):
