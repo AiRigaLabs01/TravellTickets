@@ -44,6 +44,12 @@ def _short_route(route: Any) -> str:
     return f"{_city_label(route.origin)} → {_city_label(route.destination)}"
 
 
+def _append_yandex_link(lines: list[str], yandex_url: str | None):
+    if yandex_url:
+        lines.append("")
+        lines.append(f"🔗 <a href='{yandex_url}'>Проверить на Яндекс Путешествиях</a>")
+
+
 def build_notification_text(route: Any, flight: dict) -> str:
     dep_dt = flight.get("departure_at")
     arr_dt = flight.get("estimated_arrival_at")
@@ -68,10 +74,7 @@ def build_notification_text(route: Any, flight: dict) -> str:
     if flight.get("gate"):
         lines.append(f"🏪 Продавец: {flight['gate']}")
 
-    yandex_url = flight.get("yandex_travel_url", "")
-    if yandex_url:
-        lines.append("\n🔗 Открыть и проверить:")
-        lines.append(f"• <a href='{yandex_url}'>Яндекс Путешествия</a>")
+    _append_yandex_link(lines, flight.get("yandex_travel_url"))
 
     lines.append("\n<i>⚠️ Цены из кэша Aviasales — уточняйте актуальную цену у продавца перед покупкой.</i>")
     return "\n".join(lines)
@@ -113,6 +116,7 @@ def build_no_changes_text(route: Any, flights_count: int, filtered_count: int, b
     if best_flight:
         lines.append("")
         lines.extend(_best_flight_lines(route, best_flight))
+        _append_yandex_link(lines, best_flight.get("yandex_travel_url"))
     else:
         lines.append("Подходящих билетов по условиям не найдено.")
     lines.append("")
@@ -139,6 +143,7 @@ def build_debug_monitoring_text(route: Any, flights_count: int, filtered_count: 
         if best_flight:
             lines.append("")
             lines.extend(_best_flight_lines(route, best_flight))
+            _append_yandex_link(lines, best_flight.get("yandex_travel_url"))
         else:
             lines.append("Подходящих билетов по условиям не найдено.")
     lines.append("")
