@@ -94,6 +94,44 @@ def build_notification_text(route: Any, flight: dict) -> str:
     return "\n".join(lines)
 
 
+def build_debug_monitoring_text(route: Any, flights_count: int, filtered_count: int, best_flight: dict | None, error: str | None = None) -> str:
+    checked_at = datetime.now().strftime("%H:%M:%S")
+    origin_city = _city_label(route.origin)
+    dest_city = _city_label(route.destination)
+
+    lines = [
+        "🧪 <b>Отладка мониторинга</b>",
+        f"🔄 Проверка выполнена: {checked_at}",
+        f"🛫 Маршрут: {origin_city} → {dest_city}",
+        f"📅 Дата: {route.departure_date}",
+        f"💰 Порог: {int(route.max_price):,} ₽".replace(",", " "),
+        f"⏱ Интервал: {route.interval_minutes} мин",
+        "",
+    ]
+
+    if error:
+        lines.append(f"⚠️ Ошибка API/проверки: {error}")
+    else:
+        lines.append(f"Найдено API: {flights_count}")
+        lines.append(f"После фильтров: {filtered_count}")
+        if best_flight:
+            lines.extend([
+                "",
+                "<b>Лучший вариант</b>",
+                f"💵 Цена: {int(best_flight.get('price', 0)):,} ₽".replace(",", " "),
+                f"✈️ Рейс: {best_flight.get('airline', '—')} {best_flight.get('flight_number', '')}",
+                f"🛬 Аэропорт: {best_flight.get('origin_airport', route.origin)} → {best_flight.get('destination_airport', route.destination)}",
+                f"🕓 Вылет: {_fmt_dt(best_flight.get('departure_at'))}",
+                f"🕕 Прилёт: {_fmt_dt(best_flight.get('estimated_arrival_at'))}, рассчитано",
+            ])
+        else:
+            lines.append("Подходящих билетов по условиям не найдено.")
+
+    lines.append("")
+    lines.append(f"Следующая проверка: примерно через {route.interval_minutes} мин")
+    return "\n".join(lines)
+
+
 async def send_telegram_notification(chat_id: str, text: str) -> bool:
     if not TELEGRAM_BOT_TOKEN:
         logger.warning("TELEGRAM_BOT_TOKEN not configured, skipping notification")
