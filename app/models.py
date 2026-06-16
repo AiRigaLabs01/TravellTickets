@@ -10,6 +10,7 @@ class TrackedRoute(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=True)
     telegram_chat_id = Column(String, nullable=True)
+    web_user_id = Column(Integer, ForeignKey("web_users.id"), nullable=True)
     creator_source = Column(String, default="web")
     creator_display_name = Column(String, nullable=True)
     creator_username = Column(String, nullable=True)
@@ -47,6 +48,24 @@ class TrackedRoute(Base):
 
     price_checks = relationship("PriceCheck", back_populates="route", cascade="all, delete-orphan")
     notifications = relationship("Notification", back_populates="route", cascade="all, delete-orphan")
+    web_user = relationship("WebUser", back_populates="routes")
+
+
+class WebUser(Base):
+    __tablename__ = "web_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    display_name = Column(String, nullable=True)
+    telegram_username = Column(String, nullable=True)
+    telegram_chat_id = Column(String, nullable=True)
+    is_admin = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    routes = relationship("TrackedRoute", back_populates="web_user")
 
 
 class PriceCheck(Base):

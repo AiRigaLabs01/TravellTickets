@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<nav class="navbar"><a class="brand" href="/">✈️ TravellTickets</a></nav>
+<nav class="navbar"><a class="brand" href="/">✈️ TravellTickets</a><span class="nav-spacer"></span>{% if current_user %}<a class="nav-link" href="/profile">{{ current_user.display_name or current_user.username }}</a>{% if current_user.is_admin %}<a class="nav-link" href="/admin/users">Пользователи</a>{% endif %}<a class="nav-link" href="/logout">Выйти</a>{% endif %}</nav>
 <div class="container-narrow">
   <div style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
     <a class="back-link" href="{% if route %}/route/{{ route.id }}{% else %}/{% endif %}">← Назад</a>

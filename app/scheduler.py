@@ -25,6 +25,14 @@ scheduler = AsyncIOScheduler()
 NO_CHANGE_NOTIFY_EVERY = 3
 
 
+def _notification_chat_id(route: TrackedRoute) -> str | None:
+    if route.telegram_chat_id:
+        return route.telegram_chat_id
+    if getattr(route, "web_user_id", None):
+        return None
+    return TELEGRAM_CHAT_ID
+
+
 def _should_notify(route: TrackedRoute, flight: dict, db: Session) -> bool:
     price = flight["price"]
     flight_number = flight.get("flight_number", "")
@@ -124,7 +132,7 @@ def _best_roundtrip(outbound: list[dict], inbound: list[dict], yandex_url: str) 
 async def _send_debug_message(route: TrackedRoute, flights_count: int, filtered_count: int, best_flight: dict | None, error: str | None = None):
     if not DEBUG_MONITORING_MESSAGES:
         return
-    chat_id = route.telegram_chat_id or TELEGRAM_CHAT_ID
+    chat_id = _notification_chat_id(route)
     if not chat_id:
         return
     text = build_debug_monitoring_text(route, flights_count, filtered_count, best_flight, error)
@@ -132,7 +140,7 @@ async def _send_debug_message(route: TrackedRoute, flights_count: int, filtered_
 
 
 async def _send_no_changes_message(route: TrackedRoute, flights_count: int, filtered_count: int, best_flight: dict | None):
-    chat_id = route.telegram_chat_id or TELEGRAM_CHAT_ID
+    chat_id = _notification_chat_id(route)
     if not chat_id:
         return False
     text = build_no_changes_text(route, flights_count, filtered_count, best_flight)
@@ -160,7 +168,7 @@ async def _check_roundtrip(route: TrackedRoute, db: Session):
         db.add(price_check)
         db.flush()
         if matches and _should_notify(route, best, db):
-            chat_id = route.telegram_chat_id or TELEGRAM_CHAT_ID
+            chat_id = _notification_chat_id(route)
             if chat_id:
                 text = build_notification_text(route, best)
                 sent = await send_telegram_notification(chat_id, text)
@@ -194,7 +202,7 @@ async def _check_oneway(route: TrackedRoute, db: Session):
         db.add(price_check)
         db.flush()
         if _should_notify(route, flight, db):
-            chat_id = route.telegram_chat_id or TELEGRAM_CHAT_ID
+            chat_id = _notification_chat_id(route)
             if chat_id:
                 text = build_notification_text(route, flight)
                 sent = await send_telegram_notification(chat_id, text)

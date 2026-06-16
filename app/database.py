@@ -43,6 +43,7 @@ def _ensure_tracked_route_columns():
         "creator_display_name": "VARCHAR",
         "creator_username": "VARCHAR",
         "creator_telegram_user_id": "VARCHAR",
+        "web_user_id": "INTEGER",
         "trip_type": "VARCHAR DEFAULT 'oneway'",
         "adult_seats": "INTEGER DEFAULT 1",
         "children_seats": "INTEGER DEFAULT 0",
@@ -64,6 +65,19 @@ def _ensure_price_check_columns():
 
 def init_db():
     from app import models  # noqa: F401
+    from app.auth import ADMIN_PASSWORD_HASH, ADMIN_USERNAME
     Base.metadata.create_all(bind=engine)
     _ensure_tracked_route_columns()
     _ensure_price_check_columns()
+    db = SessionLocal()
+    try:
+        if ADMIN_USERNAME and ADMIN_PASSWORD_HASH:
+            user = db.query(models.WebUser).filter(models.WebUser.username == ADMIN_USERNAME).first()
+            if not user:
+                db.add(models.WebUser(username=ADMIN_USERNAME, password_hash=ADMIN_PASSWORD_HASH, display_name="Admin", is_admin=True))
+                db.commit()
+            elif not user.is_admin:
+                user.is_admin = True
+                db.commit()
+    finally:
+        db.close()

@@ -5,8 +5,9 @@ import os
 import time
 from urllib.parse import quote
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy.orm import Session
 
 SESSION_TTL_SECONDS = 60 * 60 * 12
 HASH_ITERATIONS = 260_000
@@ -66,6 +67,42 @@ def get_session_user(request: Request) -> str | None:
         return username
     except (TypeError, ValueError):
         return None
+
+
+def normalize_telegram_username(value: str | None) -> str | None:
+    username = (value or "").strip().lstrip("@")
+    return username or None
+
+
+def get_current_web_user(request: Request, db: Session):
+    from app.models import WebUser
+
+    username = get_session_user(request)
+    if not username:
+        return None
+    return db.query(WebUser).filter(WebUser.username == username, WebUser.is_active == True).first()
+
+
+def require_admin(request: Request, db: Session):
+    user = get_current_web_user(request, db)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+def find_telegram_chat_id(db: Session, telegram_username: str | None) -> str | None:
+    from app.models import TrackedRoute
+
+    username = normalize_telegram_username(telegram_username)
+    if not username:
+        return None
+    route = (
+        db.query(TrackedRoute)
+        .filter(TrackedRoute.creator_username == username, TrackedRoute.telegram_chat_id.isnot(None))
+        .order_by(TrackedRoute.created_at.desc())
+        .first()
+    )
+    return route.telegram_chat_id if route else None
 
 
 def login_redirect(request: Request) -> RedirectResponse:

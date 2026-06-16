@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Пользователи — TravellTickets</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav class="navbar">
+  <a class="brand" href="/">✈️ TravellTickets</a>
+  <span class="subtitle">Администрирование</span>
+  <span class="nav-spacer"></span>
+  <a class="nav-link" href="/">Мониторинги</a>
+  <a class="nav-link" href="/profile">Профиль</a>
+  <a class="nav-link" href="/logout">Выйти</a>
+</nav>
+<div class="container">
+  <div class="page-header"><h1>Пользователи</h1></div>
+  <form class="form-block" method="post" action="/admin/users">
+    <div class="form-block-title"><span class="step-num">1</span> Новый пользователь</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Логин</label><input type="text" name="username" required autocomplete="off"></div>
+      <div class="form-group"><label>Пароль</label><input type="password" name="password" required autocomplete="new-password"></div>
+      <div class="form-group"><label>Имя</label><input type="text" name="display_name" placeholder="Отображаемое имя"></div>
+      <div class="form-group"><label>Telegram username</label><input type="text" name="telegram_username" placeholder="username без @"></div>
+    </div>
+    <label class="checkbox-row" style="margin-top:12px"><input type="checkbox" name="is_admin" value="1"><span>Администратор</span></label>
+    <div style="margin-top:16px"><button class="btn btn-primary" type="submit">➕ Создать</button></div>
+  </form>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Логин</th><th>Имя</th><th>Telegram</th><th>Роль</th><th>Статус</th><th>Пароль</th><th></th></tr></thead>
+      <tbody>
+      {% for user in users %}
+      <tr>
+        <td><strong>{{ user.username }}</strong></td>
+        <td>{{ user.display_name or "—" }}</td>
+        <td>
+          {% if user.telegram_username %}@{{ user.telegram_username }}{% else %}—{% endif %}
+          {% if user.telegram_chat_id %}<span class="badge badge-active">chat_id</span>{% endif %}
+        </td>
+        <td>{% if user.is_admin %}<span class="badge badge-info">admin</span>{% else %}<span class="badge">user</span>{% endif %}</td>
+        <td>{% if user.is_active %}<span class="badge badge-active">активен</span>{% else %}<span class="badge badge-inactive">выключен</span>{% endif %}</td>
+        <td>
+          <form method="post" action="/admin/users/{{ user.id }}/password" style="display:flex;gap:6px;align-items:center">
+            <input style="min-height:32px;padding:6px 8px" type="password" name="password" placeholder="Новый пароль" required>
+            <button class="btn btn-secondary btn-sm" type="submit">Сменить</button>
+          </form>
+        </td>
+        <td>
+          {% if user.id != current_user.id %}
+          <form method="post" action="/admin/users/{{ user.id }}/toggle">
+            <button class="btn btn-ghost btn-sm" type="submit">{% if user.is_active %}Отключить{% else %}Включить{% endif %}</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

@@ -17,10 +17,33 @@ from app.database import SessionLocal, get_db, init_db
 from app.date_utils import format_msk_datetime, format_msk_time, format_route_date, parse_route_date
 from app.locations import search_locations
 from app.models import Notification, PriceCheck, TrackedRoute
+from app.auth import find_telegram_chat_id, get_current_web_user
 from app.scheduler import check_route, load_all_routes, schedule_route, scheduler, unschedule_route
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+
+async def _run_telegram_polling(app: FastAPI):
+    from app.telegram_bot import create_bot
+    import asyncio
+
+    while True:
+        b, d = create_bot()
+        app.state.bot = b
+        app.state.dp = d
+        try:
+            logger.info("Telegram bot polling started")
+            await d.start_polling(b, handle_signals=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"Telegram bot polling stopped, restarting in 15s: {e}")
+            try:
+                await b.session.close()
+            except Exception:
+                pass
+            await asyncio.sleep(15)
 
 
 @asynccontextmanager
@@ -30,17 +53,14 @@ async def lifespan(app: FastAPI):
     load_all_routes()
     if TELEGRAM_BOT_TOKEN:
         try:
-            from app.telegram_bot import create_bot
             import asyncio
-            b, d = create_bot()
-            app.state.bot = b
-            app.state.dp = d
-            asyncio.create_task(d.start_polling(b, handle_signals=False))
-            logger.info("Telegram bot polling started")
+            app.state.telegram_task = asyncio.create_task(_run_telegram_polling(app))
         except Exception as e:
             logger.warning(f"Telegram bot could not start: {e}")
     yield
     scheduler.shutdown(wait=False)
+    if hasattr(app.state, "telegram_task"):
+        app.state.telegram_task.cancel()
     if hasattr(app.state, "bot"):
         try:
             await app.state.bot.session.close()
@@ -85,7 +105,10 @@ templates = Jinja2Templates(env=_jinja_env)
 
 
 def _tr(request: Request, name: str, context: dict | None = None):
-    return templates.TemplateResponse(request, name, context or {})
+    context = context or {}
+    if request is not None and "current_user" not in context:
+        context["current_user"] = getattr(request.state, "current_user", None)
+    return templates.TemplateResponse(request, name, context)
 
 
 def _enrich_route(route: TrackedRoute) -> TrackedRoute:
@@ -109,13 +132,22 @@ def _passenger_count(value: int | None, default: int = 0, min_value: int = 0, ma
         return default
 
 
+def _routes_for_user(db: Session, user):
+    query = db.query(TrackedRoute)
+    if user and not user.is_admin:
+        query = query.filter(TrackedRoute.web_user_id == user.id)
+    return query
+
+
 def _route_form_context(route=None, errors=None, origin_display="", dest_display=""):
     return {"route": route, "errors": errors or [], "origin_display": origin_display, "dest_display": dest_display, "today": date.today().isoformat()}
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, db: Session = Depends(get_db)):
-    routes = db.query(TrackedRoute).order_by(TrackedRoute.created_at.desc()).all()
+    user = get_current_web_user(request, db)
+    request.state.current_user = user
+    routes = _routes_for_user(db, user).order_by(TrackedRoute.created_at.desc()).all()
     for r in routes:
         _enrich_route(r)
     last_checks: dict[int, PriceCheck] = {}
@@ -133,6 +165,7 @@ async def route_new_form(request: Request):
 
 @app.post("/route/new")
 async def route_create(
+    request: Request,
     origin: str = Form(...),
     destination: str = Form(...),
     departure_date: str = Form(...),
@@ -167,7 +200,14 @@ async def route_create(
     if not iso_date: errors.append("Неверная дата вылета")
     if trip_type == "roundtrip" and not return_iso: errors.append("Для перелёта туда-обратно нужна дата возвращения")
     if errors:
-        return _tr(None, "route_form.html", _route_form_context(errors=errors, origin_display=origin, dest_display=destination))
+        return _tr(request, "route_form.html", _route_form_context(errors=errors, origin_display=origin, dest_display=destination))
+    user = get_current_web_user(request, db)
+    display_name = (user.display_name or user.username) if user else "Веб-интерфейс"
+    telegram_chat_id = user.telegram_chat_id if user else None
+    if user and not telegram_chat_id:
+        telegram_chat_id = find_telegram_chat_id(db, user.telegram_username)
+        if telegram_chat_id:
+            user.telegram_chat_id = telegram_chat_id
     route = TrackedRoute(
         origin=o,
         destination=d,
@@ -194,7 +234,10 @@ async def route_create(
         return_arrival_time_to=return_arrival_time_to or None,
         title=f"{city_label(o)} → {city_label(d)} {format_route_date(iso_date)}",
         creator_source="web",
-        creator_display_name="Веб-интерфейс",
+        telegram_chat_id=telegram_chat_id,
+        web_user_id=user.id if user else None,
+        creator_display_name=display_name,
+        creator_username=user.telegram_username if user else None,
     )
     db.add(route)
     db.commit()
@@ -205,7 +248,9 @@ async def route_create(
 
 @app.get("/route/{route_id}/edit", response_class=HTMLResponse)
 async def route_edit_form(request: Request, route_id: int, db: Session = Depends(get_db)):
-    route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
+    user = get_current_web_user(request, db)
+    request.state.current_user = user
+    route = _routes_for_user(db, user).filter(TrackedRoute.id == route_id).first()
     if not route:
         raise HTTPException(status_code=404)
     return _tr(request, "route_form.html", _route_form_context(route=route, origin_display=city_label(route.origin), dest_display=city_label(route.destination)))
@@ -213,6 +258,7 @@ async def route_edit_form(request: Request, route_id: int, db: Session = Depends
 
 @app.post("/route/{route_id}/edit")
 async def route_edit(
+    request: Request,
     route_id: int,
     origin: str = Form(...),
     destination: str = Form(...),
@@ -239,7 +285,8 @@ async def route_edit(
     return_arrival_time_to: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
-    route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
+    user = get_current_web_user(request, db)
+    route = _routes_for_user(db, user).filter(TrackedRoute.id == route_id).first()
     if not route:
         raise HTTPException(status_code=404)
     o, d = resolve_iata(origin), resolve_iata(destination)
@@ -277,7 +324,9 @@ async def route_edit(
 
 @app.get("/route/{route_id}", response_class=HTMLResponse)
 async def route_detail(request: Request, route_id: int, db: Session = Depends(get_db)):
-    route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
+    user = get_current_web_user(request, db)
+    request.state.current_user = user
+    route = _routes_for_user(db, user).filter(TrackedRoute.id == route_id).first()
     if not route:
         raise HTTPException(status_code=404)
     _enrich_route(route)
@@ -287,14 +336,18 @@ async def route_detail(request: Request, route_id: int, db: Session = Depends(ge
 
 
 @app.post("/route/{route_id}/check")
-async def route_check(route_id: int):
+async def route_check(request: Request, route_id: int, db: Session = Depends(get_db)):
+    user = get_current_web_user(request, db)
+    if not _routes_for_user(db, user).filter(TrackedRoute.id == route_id).first():
+        raise HTTPException(status_code=404)
     await check_route(route_id)
     return RedirectResponse(f"/route/{route_id}", status_code=303)
 
 
 @app.post("/route/{route_id}/toggle")
-async def route_toggle(route_id: int, db: Session = Depends(get_db)):
-    route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
+async def route_toggle(request: Request, route_id: int, db: Session = Depends(get_db)):
+    user = get_current_web_user(request, db)
+    route = _routes_for_user(db, user).filter(TrackedRoute.id == route_id).first()
     if not route:
         raise HTTPException(status_code=404)
     route.is_active = not route.is_active
@@ -307,8 +360,9 @@ async def route_toggle(route_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/route/{route_id}/delete")
-async def route_delete(route_id: int, db: Session = Depends(get_db)):
-    route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
+async def route_delete(request: Request, route_id: int, db: Session = Depends(get_db)):
+    user = get_current_web_user(request, db)
+    route = _routes_for_user(db, user).filter(TrackedRoute.id == route_id).first()
     if route:
         unschedule_route(route.id)
         db.delete(route)
@@ -345,3 +399,4 @@ async def api_routes(db: Session = Depends(get_db)):
         }
         for r in routes
     ]
+
