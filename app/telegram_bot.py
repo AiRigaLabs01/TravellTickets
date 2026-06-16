@@ -37,17 +37,24 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
+def _is_public_app_url() -> bool:
+    base = (APP_BASE_URL or "").strip().lower()
+    if not base.startswith(("http://", "https://")):
+        return False
+    return not any(host in base for host in ("localhost", "127.0.0.1", "0.0.0.0"))
+
+
 def route_actions(route_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🔎 Проверить сейчас", callback_data=f"check:{route_id}"),
-            InlineKeyboardButton(text="📈 История", url=f"{APP_BASE_URL}/route/{route_id}"),
-        ],
-        [
+    rows = [[InlineKeyboardButton(text="🔎 Проверить сейчас", callback_data=f"check:{route_id}")]]
+    if _is_public_app_url():
+        rows[0].append(InlineKeyboardButton(text="📈 История", url=f"{APP_BASE_URL}/route/{route_id}"))
+        rows.append([
             InlineKeyboardButton(text="✏️ Изменить", url=f"{APP_BASE_URL}/route/{route_id}/edit"),
             InlineKeyboardButton(text="⏸ Остановить", callback_data=f"stop:{route_id}"),
-        ],
-    ])
+        ])
+    else:
+        rows.append([InlineKeyboardButton(text="⏸ Остановить", callback_data=f"stop:{route_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _fmt_price(value) -> str:
@@ -91,6 +98,9 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
         ])
     else:
         lines.extend(["", "<b>Текущая проверка</b>", "Пока нет данных. Проверка могла не найти билетов по условиям или API ещё не вернул результат."])
+
+    if not _is_public_app_url():
+        lines.extend(["", "ℹ️ Веб-ссылки скрыты: APP_BASE_URL указывает на localhost. Укажите публичный HTTPS URL Replit, чтобы появились кнопки История/Изменить."])
 
     return "\n".join(lines)
 
