@@ -6,6 +6,8 @@ load_dotenv()
 TRAVELPAYOUTS_TOKEN = os.getenv("TRAVELPAYOUTS_TOKEN", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "mytravellticketbot").strip().lstrip("@")
+TELEGRAM_BOT_URL = os.getenv("TELEGRAM_BOT_URL", f"https://t.me/{TELEGRAM_BOT_USERNAME}" if TELEGRAM_BOT_USERNAME else "")
 APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:5000")
 
 DEBUG_MONITORING_MESSAGES = os.getenv("DEBUG_MONITORING_MESSAGES", "false").lower() in ("1", "true", "yes", "on")
