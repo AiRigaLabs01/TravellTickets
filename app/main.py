@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.city_codes import airline_label, airport_label, city_label, resolve_iata
 from app.config import TELEGRAM_BOT_TOKEN
 from app.database import SessionLocal, get_db, init_db
+from app.date_utils import format_route_date, parse_route_date
 from app.locations import search_locations
 from app.models import Notification, PriceCheck, TrackedRoute
 from app.scheduler import check_route, load_all_routes, schedule_route, scheduler, unschedule_route
@@ -73,6 +74,7 @@ _jinja_env = Environment(loader=FileSystemLoader("app/templates"), autoescape=Tr
 _jinja_env.filters["fmt_price"] = _fmt_price
 _jinja_env.filters["fmt_dt"] = _fmt_dt
 _jinja_env.filters["fmt_time"] = _fmt_time
+_jinja_env.filters["fmt_route_date"] = format_route_date
 _jinja_env.globals["airline_label"] = airline_label
 _jinja_env.globals["airport_label"] = airport_label
 _jinja_env.globals["city_label"] = city_label
@@ -142,11 +144,14 @@ async def route_new_submit(
 ):
     origin_code = resolve_iata(origin) if origin else ""
     dest_code = resolve_iata(destination) if destination else ""
+    normalized_date = parse_route_date(departure_date)
     errors = []
     if not origin_code or len(origin_code) != 3:
         errors.append(f"Не удалось определить аэропорт вылета: «{origin_input or origin}». Введите название города или IATA-код (3 буквы).")
     if not dest_code or len(dest_code) != 3:
         errors.append(f"Не удалось определить аэропорт назначения: «{destination_input or destination}». Введите название города или IATA-код.")
+    if not normalized_date:
+        errors.append("Введите дату вылета в формате ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.")
     if max_price <= 0:
         errors.append("Максимальная цена должна быть больше нуля.")
     if interval_minutes not in (5, 10):
@@ -155,12 +160,12 @@ async def route_new_submit(
         return _tr(request, "route_form.html", {"route": None, "errors": errors, "origin_display": origin_input or origin, "dest_display": destination_input or destination, "today": date.today().isoformat()})
 
     from app.config import TELEGRAM_CHAT_ID
-    auto_title = title or f"{city_label(origin_code)} → {city_label(dest_code)} {departure_date}"
+    auto_title = title or f"{city_label(origin_code)} → {city_label(dest_code)} {format_route_date(normalized_date)}"
     route = TrackedRoute(
         title=auto_title,
         origin=origin_code,
         destination=dest_code,
-        departure_date=departure_date,
+        departure_date=normalized_date,
         max_price=max_price,
         interval_minutes=interval_minutes,
         direct_only=direct_only,
@@ -229,25 +234,28 @@ async def route_edit_submit(
 
     origin_code = resolve_iata(origin) if origin else ""
     dest_code = resolve_iata(destination) if destination else ""
+    normalized_date = parse_route_date(departure_date)
     errors = []
     if not origin_code or len(origin_code) != 3:
         errors.append(f"Не удалось определить аэропорт вылета: «{origin_input or origin}».")
     if not dest_code or len(dest_code) != 3:
         errors.append(f"Не удалось определить аэропорт назначения: «{destination_input or destination}».")
+    if not normalized_date:
+        errors.append("Введите дату вылета в формате ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.")
     if max_price <= 0:
         errors.append("Максимальная цена должна быть больше нуля.")
     if errors:
         _enrich_route(route)
         return _tr(request, "route_form.html", {"route": route, "errors": errors, "origin_display": origin_input or origin, "dest_display": destination_input or destination, "today": date.today().isoformat()})
 
-    route_changed = (route.origin != origin_code or route.destination != dest_code or route.departure_date != departure_date)
+    route_changed = (route.origin != origin_code or route.destination != dest_code or route.departure_date != normalized_date)
     if route_changed:
         _reset_route_results(db, route)
 
     route.origin = origin_code
     route.destination = dest_code
-    route.departure_date = departure_date
-    route.title = title or f"{city_label(origin_code)} → {city_label(dest_code)} {departure_date}"
+    route.departure_date = normalized_date
+    route.title = title or f"{city_label(origin_code)} → {city_label(dest_code)} {format_route_date(normalized_date)}"
     route.max_price = max_price
     route.interval_minutes = interval_minutes if interval_minutes in (5, 10) else 10
     route.direct_only = direct_only
