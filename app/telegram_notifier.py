@@ -50,7 +50,34 @@ def _append_yandex_link(lines: list[str], yandex_url: str | None):
         lines.append(f"🔗 <a href='{yandex_url}'>Проверить на Яндекс Путешествиях</a>")
 
 
+def _leg_lines(title: str, leg: dict) -> list[str]:
+    return [
+        f"<b>{title}</b>",
+        f"✈️ Рейс: {leg.get('airline', '—')} {leg.get('flight_number', '')}",
+        f"🏢 Аэропорт: {leg.get('origin_airport', leg.get('origin', '—'))} → {leg.get('destination_airport', leg.get('destination', '—'))}",
+        f"🛫 Вылет: {_fmt_dt(leg.get('departure_at'))}",
+        f"🛬 Прилёт: {_fmt_dt(leg.get('estimated_arrival_at'))}, рассчитано",
+        f"💵 Цена плеча: {int(leg.get('price', 0)):,} ₽".replace(",", " "),
+    ]
+
+
 def build_notification_text(route: Any, flight: dict) -> str:
+    return_flight = flight.get("return_flight")
+    if return_flight:
+        lines = [
+            "🔥 <b>Найден билет туда-обратно по вашим условиям</b>",
+            _short_route(route),
+            f"💰 Общая цена: <b>{int(flight.get('price', 0)):,} ₽</b>".replace(",", "\u00a0"),
+            f"🎯 Ваш лимит: {int(route.max_price):,} ₽".replace(",", " "),
+            "",
+        ]
+        lines.extend(_leg_lines("Туда", flight))
+        lines.append("")
+        lines.extend(_leg_lines("Обратно", return_flight))
+        _append_yandex_link(lines, flight.get("yandex_travel_url"))
+        lines.append("\n<i>⚠️ Цена туда-обратно рассчитана как сумма двух отдельных плеч из кэша Aviasales. Финальную цену и тариф проверяйте у продавца.</i>")
+        return "\n".join(lines)
+
     dep_dt = flight.get("departure_at")
     arr_dt = flight.get("estimated_arrival_at")
     duration = flight.get("duration", 0) or 0
@@ -75,7 +102,6 @@ def build_notification_text(route: Any, flight: dict) -> str:
         lines.append(f"🏪 Продавец: {flight['gate']}")
 
     _append_yandex_link(lines, flight.get("yandex_travel_url"))
-
     lines.append("\n<i>⚠️ Цены из кэша Aviasales — уточняйте актуальную цену у продавца перед покупкой.</i>")
     return "\n".join(lines)
 
@@ -93,11 +119,17 @@ def _best_flight_lines(route: Any, flight: dict) -> list[str]:
     else:
         lines.append("<b>Текущий лучший вариант</b>")
         lines.append(f"💵 Цена: {price:,} ₽".replace(",", " "))
-    lines.extend([
-        f"✈️ Рейс: {flight.get('airline', '—')} {flight.get('flight_number', '')}",
-        f"🕓 Вылет: {_fmt_dt(flight.get('departure_at'))}",
-        f"🕕 Прилёт: {_fmt_dt(flight.get('estimated_arrival_at'))}, рассчитано",
-    ])
+    if flight.get("return_flight"):
+        lines.append("")
+        lines.extend(_leg_lines("Туда", flight))
+        lines.append("")
+        lines.extend(_leg_lines("Обратно", flight["return_flight"]))
+    else:
+        lines.extend([
+            f"✈️ Рейс: {flight.get('airline', '—')} {flight.get('flight_number', '')}",
+            f"🕓 Вылет: {_fmt_dt(flight.get('departure_at'))}",
+            f"🕕 Прилёт: {_fmt_dt(flight.get('estimated_arrival_at'))}, рассчитано",
+        ])
     return lines
 
 
