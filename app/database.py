@@ -24,12 +24,19 @@ def _is_postgres() -> bool:
     return engine.dialect.name.startswith("postgres")
 
 
+def _add_missing_columns(table_name: str, columns: dict[str, str]):
+    inspector = inspect(engine)
+    if table_name not in inspector.get_table_names():
+        return
+    existing = {c["name"] for c in inspector.get_columns(table_name)}
+    with engine.begin() as conn:
+        for name, ddl in columns.items():
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {name} {ddl}"))
+
+
 def _ensure_tracked_route_columns():
     """Small MVP migration helper for SQLite/Postgres-like dev DBs without Alembic."""
-    inspector = inspect(engine)
-    if "tracked_routes" not in inspector.get_table_names():
-        return
-    existing = {c["name"] for c in inspector.get_columns("tracked_routes")}
     boolean_default = "BOOLEAN DEFAULT false" if _is_postgres() else "BOOLEAN DEFAULT 0"
     columns = {
         "creator_source": "VARCHAR DEFAULT 'web'",
@@ -47,13 +54,16 @@ def _ensure_tracked_route_columns():
         "return_arrival_time_to": "VARCHAR",
         "no_change_checks_count": "INTEGER DEFAULT 0",
     }
-    with engine.begin() as conn:
-        for name, ddl in columns.items():
-            if name not in existing:
-                conn.execute(text(f"ALTER TABLE tracked_routes ADD COLUMN {name} {ddl}"))
+    _add_missing_columns("tracked_routes", columns)
+
+
+def _ensure_price_check_columns():
+    boolean_default = "BOOLEAN DEFAULT true" if _is_postgres() else "BOOLEAN DEFAULT 1"
+    _add_missing_columns("price_checks", {"matches_filters": boolean_default})
 
 
 def init_db():
     from app import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _ensure_tracked_route_columns()
+    _ensure_price_check_columns()
