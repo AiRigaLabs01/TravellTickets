@@ -84,31 +84,30 @@ def _normalize_flight(item: dict) -> dict:
     }
 
 
-async def search_prices(route: Any) -> list[dict]:
-    """
-    Search prices via Travelpayouts Aviasales API.
-    Returns list of normalized flight dicts.
-    """
+async def search_prices_for_leg(origin: str, destination: str, departure_date: str, direct_only: bool = False) -> list[dict]:
+    """Search one route leg via Travelpayouts Aviasales API."""
     if not TRAVELPAYOUTS_TOKEN:
         raise TravelpayoutsError("TRAVELPAYOUTS_TOKEN is not configured")
 
     params = {
-        "origin": route.origin,
-        "destination": route.destination,
-        "departure_at": route.departure_date,
+        "origin": origin,
+        "destination": destination,
+        "departure_at": departure_date,
         "currency": "rub",
         "market": "ru",
         "limit": 30,
         "sorting": "price",
     }
-
-    if route.direct_only:
+    if direct_only:
         params["direct"] = "true"
 
-    try:
-        data = await _fetch_prices(params)
-    except TravelpayoutsError:
-        raise
+    data = await _fetch_prices(params)
+    return [_normalize_flight(item) for item in data.get("data", [])]
 
-    flights = [_normalize_flight(item) for item in data.get("data", [])]
-    return flights
+
+async def search_prices(route: Any) -> list[dict]:
+    """
+    Search prices via Travelpayouts Aviasales API.
+    Returns list of normalized flight dicts.
+    """
+    return await search_prices_for_leg(route.origin, route.destination, route.departure_date, route.direct_only)
