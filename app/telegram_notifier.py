@@ -77,6 +77,27 @@ def build_notification_text(route: Any, flight: dict) -> str:
     return "\n".join(lines)
 
 
+def _best_flight_lines(route: Any, flight: dict) -> list[str]:
+    price = int(flight.get("price", 0))
+    lines = []
+    if flight.get("above_limit"):
+        diff = price - int(route.max_price)
+        lines.append("<b>Минимальная найденная цена выше вашего лимита</b>")
+        lines.append(f"💵 Найдено: {price:,} ₽".replace(",", " "))
+        lines.append(f"🎯 Ваш лимит: {int(route.max_price):,} ₽".replace(",", " "))
+        if diff > 0:
+            lines.append(f"↗️ Выше лимита на {diff:,} ₽".replace(",", " "))
+    else:
+        lines.append("<b>Текущий лучший вариант</b>")
+        lines.append(f"💵 Цена: {price:,} ₽".replace(",", " "))
+    lines.extend([
+        f"✈️ Рейс: {flight.get('airline', '—')} {flight.get('flight_number', '')}",
+        f"🕓 Вылет: {_fmt_dt(flight.get('departure_at'))}",
+        f"🕕 Прилёт: {_fmt_dt(flight.get('estimated_arrival_at'))}, рассчитано",
+    ])
+    return lines
+
+
 def build_no_changes_text(route: Any, flights_count: int, filtered_count: int, best_flight: dict | None) -> str:
     checked_at = format_msk_time(datetime.utcnow())
     lines = [
@@ -87,17 +108,11 @@ def build_no_changes_text(route: Any, flights_count: int, filtered_count: int, b
         f"⏱ Период: {route.interval_minutes} мин",
         "",
         f"Найдено API: {flights_count}",
-        f"После фильтров: {filtered_count}",
+        f"После фильтров по лимиту: {filtered_count}",
     ]
     if best_flight:
-        lines.extend([
-            "",
-            "<b>Текущий лучший вариант</b>",
-            f"💵 Цена: {int(best_flight.get('price', 0)):,} ₽".replace(",", " "),
-            f"✈️ Рейс: {best_flight.get('airline', '—')} {best_flight.get('flight_number', '')}",
-            f"🕓 Вылет: {_fmt_dt(best_flight.get('departure_at'))}",
-            f"🕕 Прилёт: {_fmt_dt(best_flight.get('estimated_arrival_at'))}, рассчитано",
-        ])
+        lines.append("")
+        lines.extend(_best_flight_lines(route, best_flight))
     else:
         lines.append("Подходящих билетов по условиям не найдено.")
     lines.append("")
@@ -120,17 +135,10 @@ def build_debug_monitoring_text(route: Any, flights_count: int, filtered_count: 
         lines.append(f"⚠️ Ошибка API/проверки: {error}")
     else:
         lines.append(f"Найдено API: {flights_count}")
-        lines.append(f"После фильтров: {filtered_count}")
+        lines.append(f"После фильтров по лимиту: {filtered_count}")
         if best_flight:
-            lines.extend([
-                "",
-                "<b>Лучший вариант</b>",
-                f"💵 Цена: {int(best_flight.get('price', 0)):,} ₽".replace(",", " "),
-                f"✈️ Рейс: {best_flight.get('airline', '—')} {best_flight.get('flight_number', '')}",
-                f"🛬 Аэропорт: {best_flight.get('origin_airport', route.origin)} → {best_flight.get('destination_airport', route.destination)}",
-                f"🕓 Вылет: {_fmt_dt(best_flight.get('departure_at'))}",
-                f"🕕 Прилёт: {_fmt_dt(best_flight.get('estimated_arrival_at'))}, рассчитано",
-            ])
+            lines.append("")
+            lines.extend(_best_flight_lines(route, best_flight))
         else:
             lines.append("Подходящих билетов по условиям не найдено.")
     lines.append("")
