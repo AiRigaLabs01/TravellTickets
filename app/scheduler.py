@@ -21,6 +21,7 @@ from app.yandex_links import build_yandex_travel_url_for_route
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
+NO_CHANGE_NOTIFY_EVERY = 3
 
 
 def _should_notify(route: TrackedRoute, flight: dict, db: Session) -> bool:
@@ -50,9 +51,9 @@ async def _send_debug_message(route: TrackedRoute, flights_count: int, filtered_
 async def _send_no_changes_message(route: TrackedRoute, flights_count: int, filtered_count: int, best_flight: dict | None):
     chat_id = route.telegram_chat_id or TELEGRAM_CHAT_ID
     if not chat_id:
-        return
+        return False
     text = build_no_changes_text(route, flights_count, filtered_count, best_flight)
-    await send_telegram_notification(chat_id, text)
+    return await send_telegram_notification(chat_id, text)
 
 
 async def check_route(route_id: int):
@@ -113,12 +114,25 @@ async def check_route(route_id: int):
                     sent = await send_telegram_notification(chat_id, text)
                     if sent:
                         notification_sent = True
+                        route.no_change_checks_count = 0
                         db.add(Notification(tracked_route_id=route.id, price_check_id=price_check.id, channel="telegram", message=text))
             if route.last_best_price is None or flight["price"] < route.last_best_price:
                 route.last_best_price = flight["price"]
-        db.commit()
         if not notification_sent:
-            await _send_no_changes_message(route, len(flights), len(filtered), best_flight)
+            route.no_change_checks_count = (route.no_change_checks_count or 0) + 1
+        db.commit()
+
+        if not notification_sent and (route.no_change_checks_count or 0) >= NO_CHANGE_NOTIFY_EVERY:
+            sent = await _send_no_changes_message(route, len(flights), len(filtered), best_flight)
+            if sent:
+                db = SessionLocal()
+                try:
+                    route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
+                    if route:
+                        route.no_change_checks_count = 0
+                        db.commit()
+                finally:
+                    db.close()
         await _send_debug_message(route, len(flights), len(filtered), best_flight)
     except Exception as e:
         logger.exception(f"Unexpected error checking route #{route_id}: {e}")
