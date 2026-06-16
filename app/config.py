@@ -8,6 +8,8 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:5000")
 
+DEBUG_MONITORING_MESSAGES = os.getenv("DEBUG_MONITORING_MESSAGES", "false").lower() in ("1", "true", "yes", "on")
+
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./travelltickets.db")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
