@@ -37,6 +37,7 @@ class TrackedRoute(Base):
     return_departure_time_to = Column(String, nullable=True)
     return_arrival_time_from = Column(String, nullable=True)
     return_arrival_time_to = Column(String, nullable=True)
+    no_change_checks_count = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
     last_best_price = Column(Float, nullable=True)
     last_checked_at = Column(DateTime, nullable=True)
