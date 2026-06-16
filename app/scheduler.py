@@ -28,14 +28,39 @@ def _should_notify(route: TrackedRoute, flight: dict, db: Session) -> bool:
     price = flight["price"]
     flight_number = flight.get("flight_number", "")
     airline = flight.get("airline", "")
-    existing = db.query(Notification).join(PriceCheck).filter(Notification.tracked_route_id == route.id, PriceCheck.flight_number == flight_number, PriceCheck.airline == airline, PriceCheck.price == price).first()
-    if existing:
-        return False
-    if price <= route.max_price:
-        return True
-    if route.last_best_price is not None and price < route.last_best_price:
-        return True
-    return False
+    existing = db.query(Notification).join(PriceCheck).filter(
+        Notification.tracked_route_id == route.id,
+        PriceCheck.flight_number == flight_number,
+        PriceCheck.airline == airline,
+        PriceCheck.price == price,
+        PriceCheck.matches_filters == True,
+    ).first()
+    return existing is None and price <= route.max_price
+
+
+def _make_price_check(route: TrackedRoute, flight: dict, yandex_url: str, matches_filters: bool) -> PriceCheck:
+    return PriceCheck(
+        tracked_route_id=route.id,
+        checked_at=datetime.utcnow(),
+        price=flight["price"],
+        matches_filters=matches_filters,
+        airline=flight.get("airline"),
+        flight_number=flight.get("flight_number"),
+        gate=flight.get("gate"),
+        origin=flight.get("origin"),
+        destination=flight.get("destination"),
+        origin_airport=flight.get("origin_airport"),
+        destination_airport=flight.get("destination_airport"),
+        departure_at=flight.get("departure_at"),
+        duration=flight.get("duration"),
+        estimated_arrival_at=flight.get("estimated_arrival_at"),
+        is_estimated_arrival=flight.get("is_estimated_arrival", True),
+        transfers=flight.get("transfers", 0),
+        link=flight.get("link"),
+        aviasales_url=flight.get("aviasales_url"),
+        yandex_travel_url=yandex_url,
+        raw_json=json.dumps(flight.get("raw_json", {}), default=str),
+    )
 
 
 async def _send_debug_message(route: TrackedRoute, flights_count: int, filtered_count: int, best_flight: dict | None, error: str | None = None):
@@ -76,35 +101,22 @@ async def check_route(route_id: int):
 
         route.last_error = None
         route.last_checked_at = datetime.utcnow()
-        filtered = apply_filters(flights, route)
-        logger.info(f"Route #{route_id}: {len(flights)} flights found, {len(filtered)} after filters")
+        filtered = apply_filters(flights, route, enforce_price=True)
+        comparable = apply_filters(flights, route, enforce_price=False)
         best_flight = min(filtered, key=lambda f: f.get("price", 10**12)) if filtered else None
+        best_any_flight = min(comparable, key=lambda f: f.get("price", 10**12)) if comparable else None
+        status_flight = best_flight or best_any_flight
+        if status_flight and not best_flight and status_flight.get("price", 0) > route.max_price:
+            status_flight["above_limit"] = True
+            status_flight["limit_price"] = route.max_price
+
+        logger.info(f"Route #{route_id}: {len(flights)} flights found, {len(filtered)} after filters")
         yandex_url = build_yandex_travel_url_for_route(route)
         notification_sent = False
 
-        for flight in filtered:
+        for flight in sorted(filtered, key=lambda f: f.get("price", 10**12)):
             flight["yandex_travel_url"] = yandex_url
-            price_check = PriceCheck(
-                tracked_route_id=route.id,
-                checked_at=datetime.utcnow(),
-                price=flight["price"],
-                airline=flight.get("airline"),
-                flight_number=flight.get("flight_number"),
-                gate=flight.get("gate"),
-                origin=flight.get("origin"),
-                destination=flight.get("destination"),
-                origin_airport=flight.get("origin_airport"),
-                destination_airport=flight.get("destination_airport"),
-                departure_at=flight.get("departure_at"),
-                duration=flight.get("duration"),
-                estimated_arrival_at=flight.get("estimated_arrival_at"),
-                is_estimated_arrival=flight.get("is_estimated_arrival", True),
-                transfers=flight.get("transfers", 0),
-                link=flight.get("link"),
-                aviasales_url=flight.get("aviasales_url"),
-                yandex_travel_url=yandex_url,
-                raw_json=json.dumps(flight.get("raw_json", {}), default=str),
-            )
+            price_check = _make_price_check(route, flight, yandex_url, True)
             db.add(price_check)
             db.flush()
             if _should_notify(route, flight, db):
@@ -118,22 +130,21 @@ async def check_route(route_id: int):
                         db.add(Notification(tracked_route_id=route.id, price_check_id=price_check.id, channel="telegram", message=text))
             if route.last_best_price is None or flight["price"] < route.last_best_price:
                 route.last_best_price = flight["price"]
+
+        if not filtered and best_any_flight:
+            best_any_flight["yandex_travel_url"] = yandex_url
+            db.add(_make_price_check(route, best_any_flight, yandex_url, False))
+
         if not notification_sent:
             route.no_change_checks_count = (route.no_change_checks_count or 0) + 1
         db.commit()
 
         if not notification_sent and (route.no_change_checks_count or 0) >= NO_CHANGE_NOTIFY_EVERY:
-            sent = await _send_no_changes_message(route, len(flights), len(filtered), best_flight)
+            sent = await _send_no_changes_message(route, len(flights), len(filtered), status_flight)
             if sent:
-                db = SessionLocal()
-                try:
-                    route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
-                    if route:
-                        route.no_change_checks_count = 0
-                        db.commit()
-                finally:
-                    db.close()
-        await _send_debug_message(route, len(flights), len(filtered), best_flight)
+                route.no_change_checks_count = 0
+                db.commit()
+        await _send_debug_message(route, len(flights), len(filtered), status_flight)
     except Exception as e:
         logger.exception(f"Unexpected error checking route #{route_id}: {e}")
         try:
