@@ -1,7 +1,7 @@
 import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -11,9 +11,9 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.orm import Session
 
+from app.city_codes import airline_label, airport_label, city_label, resolve_iata
 from app.config import TELEGRAM_BOT_TOKEN
 from app.database import SessionLocal, get_db, init_db
-from app.flight_filters import apply_filters
 from app.models import Notification, PriceCheck, TrackedRoute
 from app.scheduler import (
     check_route,
@@ -59,6 +59,8 @@ async def lifespan(app: FastAPI):
             pass
 
 
+# ── Jinja2 filters and globals ─────────────────────────────────────────────────
+
 def _fmt_price(v):
     if v is None:
         return "—"
@@ -88,6 +90,9 @@ _jinja_env = Environment(
 _jinja_env.filters["fmt_price"] = _fmt_price
 _jinja_env.filters["fmt_dt"] = _fmt_dt
 _jinja_env.filters["fmt_time"] = _fmt_time
+_jinja_env.globals["airline_label"] = airline_label
+_jinja_env.globals["airport_label"] = airport_label
+_jinja_env.globals["city_label"] = city_label
 
 app = FastAPI(title="TravellTickets", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -95,9 +100,15 @@ templates = Jinja2Templates(env=_jinja_env)
 
 
 def _tr(request: Request, name: str, context: dict | None = None):
-    """Wrapper that handles both old and new Starlette TemplateResponse API."""
     ctx = context or {}
     return templates.TemplateResponse(request, name, ctx)
+
+
+def _enrich_route(route: TrackedRoute) -> TrackedRoute:
+    """Attach computed human-readable labels to a route object."""
+    route.origin_city = city_label(route.origin)
+    route.dest_city = city_label(route.destination)
+    return route
 
 
 # ── Web UI Routes ──────────────────────────────────────────────────────────────
@@ -105,12 +116,33 @@ def _tr(request: Request, name: str, context: dict | None = None):
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, db: Session = Depends(get_db)):
     routes = db.query(TrackedRoute).order_by(TrackedRoute.created_at.desc()).all()
-    return _tr(request, "index.html", {"routes": routes})
+    for r in routes:
+        _enrich_route(r)
+
+    # Fetch the most recent PriceCheck for each route
+    last_checks: dict[int, PriceCheck] = {}
+    for r in routes:
+        last = (
+            db.query(PriceCheck)
+            .filter(PriceCheck.tracked_route_id == r.id)
+            .order_by(PriceCheck.checked_at.desc())
+            .first()
+        )
+        if last:
+            last_checks[r.id] = last
+
+    return _tr(request, "index.html", {"routes": routes, "last_checks": last_checks})
 
 
 @app.get("/route/new", response_class=HTMLResponse)
 async def route_new_form(request: Request):
-    return _tr(request, "route_form.html", {"route": None, "errors": []})
+    return _tr(request, "route_form.html", {
+        "route": None,
+        "errors": [],
+        "origin_display": "",
+        "dest_display": "",
+        "today": date.today().isoformat(),
+    })
 
 
 @app.post("/route/new")
@@ -119,6 +151,8 @@ async def route_new_submit(
     title: Optional[str] = Form(None),
     origin: str = Form(...),
     destination: str = Form(...),
+    origin_input: Optional[str] = Form(None),
+    destination_input: Optional[str] = Form(None),
     departure_date: str = Form(...),
     max_price: float = Form(...),
     interval_minutes: int = Form(10),
@@ -133,19 +167,39 @@ async def route_new_submit(
     telegram_chat_id: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
+    # Resolve city names → IATA codes
+    origin_code = resolve_iata(origin) if origin else ""
+    dest_code = resolve_iata(destination) if destination else ""
+
     errors = []
-    if not origin or len(origin.strip()) != 3:
-        errors.append("Код аэропорта вылета должен быть 3 символа (IATA)")
-    if not destination or len(destination.strip()) != 3:
-        errors.append("Код аэропорта назначения должен быть 3 символа (IATA)")
+    if not origin_code or len(origin_code) != 3:
+        errors.append(f"Не удалось определить аэропорт вылета: «{origin_input or origin}». Введите название города или IATA-код (3 буквы).")
+    if not dest_code or len(dest_code) != 3:
+        errors.append(f"Не удалось определить аэропорт назначения: «{destination_input or destination}». Введите название города или IATA-код.")
+    if max_price <= 0:
+        errors.append("Максимальная цена должна быть больше нуля.")
+    if interval_minutes not in (5, 10):
+        interval_minutes = 10
+
     if errors:
-        return _tr(request, "route_form.html", {"route": None, "errors": errors})
+        return _tr(request, "route_form.html", {
+            "route": None,
+            "errors": errors,
+            "origin_display": origin_input or origin,
+            "dest_display": destination_input or destination,
+            "today": date.today().isoformat(),
+        })
 
     from app.config import TELEGRAM_CHAT_ID
+
+    origin_city_name = city_label(origin_code)
+    dest_city_name = city_label(dest_code)
+    auto_title = title or f"{origin_city_name} → {dest_city_name} {departure_date}"
+
     route = TrackedRoute(
-        title=title or f"{origin.upper()} → {destination.upper()} {departure_date}",
-        origin=origin.strip().upper(),
-        destination=destination.strip().upper(),
+        title=auto_title,
+        origin=origin_code,
+        destination=dest_code,
         departure_date=departure_date,
         max_price=max_price,
         interval_minutes=interval_minutes,
@@ -171,6 +225,7 @@ async def route_detail(request: Request, route_id: int, db: Session = Depends(ge
     route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
     if not route:
         raise HTTPException(status_code=404, detail="Маршрут не найден")
+    _enrich_route(route)
     checks = (
         db.query(PriceCheck)
         .filter(PriceCheck.tracked_route_id == route_id)
@@ -195,7 +250,14 @@ async def route_edit_form(request: Request, route_id: int, db: Session = Depends
     route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id).first()
     if not route:
         raise HTTPException(status_code=404, detail="Маршрут не найден")
-    return _tr(request, "route_form.html", {"route": route, "errors": []})
+    _enrich_route(route)
+    return _tr(request, "route_form.html", {
+        "route": route,
+        "errors": [],
+        "origin_display": city_label(route.origin),
+        "dest_display": city_label(route.destination),
+        "today": date.today().isoformat(),
+    })
 
 
 @app.post("/route/{route_id}/edit")
@@ -223,7 +285,7 @@ async def route_edit_submit(
     if title:
         route.title = title
     route.max_price = max_price
-    route.interval_minutes = interval_minutes
+    route.interval_minutes = interval_minutes if interval_minutes in (5, 10) else 10
     route.direct_only = direct_only
     route.airline_codes = airline_codes or None
     route.origin_airports = origin_airports or None

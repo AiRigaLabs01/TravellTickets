@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{% if route %}Изменить маршрут{% else %}Новый маршрут{% endif %} — TravellTickets</title>
+<title>{% if route %}Изменить маршрут{% else %}Создать мониторинг{% endif %} — TravellTickets</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -11,13 +11,18 @@
   <a class="brand" href="/">✈️ TravellTickets</a>
 </nav>
 
-<div class="container" style="max-width:700px">
-  <div style="margin-bottom:16px">
+<div class="container-narrow">
+  <div style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
     <a class="back-link" href="{% if route %}/route/{{ route.id }}{% else %}/{% endif %}">← Назад</a>
+    {% if not route %}
+    <button class="preset-btn" type="button" onclick="fillPreset()">
+      💡 Пример: Екатеринбург → Москва
+    </button>
+    {% endif %}
   </div>
 
   <div class="page-header">
-    <h1>{% if route %}Изменить маршрут #{{ route.id }}{% else %}Добавить маршрут{% endif %}</h1>
+    <h1>{% if route %}Изменить маршрут{% else %}Создать мониторинг билетов{% endif %}</h1>
   </div>
 
   {% if errors %}
@@ -26,122 +31,368 @@
     {% endfor %}
   {% endif %}
 
-  <form method="post" action="{% if route %}/route/{{ route.id }}/edit{% else %}/route/new{% endif %}">
-    <div class="card">
-      <div class="form-section-title">Основные параметры</div>
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Название (необязательно)</label>
-          <input type="text" name="title" value="{{ route.title if route else '' }}" placeholder="SVX → MOW июнь 2026">
-        </div>
-        <div class="form-group">
-          <label>Telegram Chat ID (необязательно)</label>
-          <input type="text" name="telegram_chat_id" value="{{ route.telegram_chat_id if route else '' }}" placeholder="12345678">
-          <span class="hint">Если не указан, используется TELEGRAM_CHAT_ID из настроек</span>
-        </div>
-      </div>
+  <form method="post" action="{% if route %}/route/{{ route.id }}/edit{% else %}/route/new{% endif %}" id="routeForm">
 
-      <div class="form-grid" style="margin-top:16px">
+    <!-- Блок 1: Маршрут -->
+    <div class="form-block">
+      <div class="form-block-title"><span class="step-num">1</span> Маршрут</div>
+      <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr">
         <div class="form-group">
-          <label>Аэропорт вылета *</label>
-          <input type="text" name="origin" value="{{ route.origin if route else '' }}"
-            placeholder="SVX" maxlength="3" style="text-transform:uppercase"
-            {% if route %}readonly{% endif %} required>
-          <span class="hint">IATA-код, 3 буквы. Например: SVX, SVO, LED</span>
+          <label>Откуда *</label>
+          <input type="text" name="origin_input" id="origin_input"
+            value="{{ origin_display }}"
+            placeholder="Екатеринбург или SVX"
+            {% if route %}readonly{% endif %} required autocomplete="off">
+          <input type="hidden" name="origin" id="origin_hidden" value="{{ route.origin if route else '' }}">
+          <span class="hint" id="origin_hint">{% if route %}{{ route.origin }}{% else %}Город или IATA-код{% endif %}</span>
         </div>
         <div class="form-group">
-          <label>Аэропорт назначения *</label>
-          <input type="text" name="destination" value="{{ route.destination if route else '' }}"
-            placeholder="MOW" maxlength="3" style="text-transform:uppercase"
-            {% if route %}readonly{% endif %} required>
-          <span class="hint">MOW = Вся Москва, SVO/DME/VKO/ZIA = конкретный</span>
+          <label>Куда *</label>
+          <input type="text" name="destination_input" id="destination_input"
+            value="{{ dest_display }}"
+            placeholder="Москва или MOW"
+            {% if route %}readonly{% endif %} required autocomplete="off">
+          <input type="hidden" name="destination" id="destination_hidden" value="{{ route.destination if route else '' }}">
+          <span class="hint" id="destination_hint">{% if route %}{{ route.destination }}{% else %}Город или IATA-код{% endif %}</span>
         </div>
         <div class="form-group">
           <label>Дата вылета *</label>
-          <input type="date" name="departure_date" value="{{ route.departure_date if route else '' }}"
-            {% if route %}readonly{% endif %} required>
-        </div>
-        <div class="form-group">
-          <label>Максимальная цена (₽) *</label>
-          <input type="number" name="max_price" value="{{ route.max_price if route else '' }}"
-            placeholder="5000" min="100" required>
-        </div>
-        <div class="form-group">
-          <label>Интервал проверки</label>
-          <select name="interval_minutes">
-            <option value="5" {% if route and route.interval_minutes == 5 %}selected{% endif %}>5 минут</option>
-            <option value="10" {% if not route or route.interval_minutes == 10 %}selected{% endif %}>10 минут</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>&nbsp;</label>
-          <div class="checkbox-row" style="margin-top:8px">
-            <input type="checkbox" name="direct_only" id="direct_only" value="true"
-              {% if route and route.direct_only %}checked{% endif %}>
-            <label for="direct_only">Только прямые рейсы (transfers = 0)</label>
-          </div>
+          <input type="date" name="departure_date"
+            value="{{ route.departure_date if route else '' }}"
+            {% if route %}readonly{% endif %} required min="{{ today }}">
         </div>
       </div>
     </div>
 
-    <div class="card" style="margin-top:8px">
-      <div class="form-section-title">Расширенные фильтры</div>
-
+    <!-- Блок 2: Цена и интервал -->
+    <div class="form-block">
+      <div class="form-block-title"><span class="step-num">2</span> Цена и частота проверки</div>
       <div class="form-grid">
         <div class="form-group">
-          <label>Коды авиакомпаний</label>
-          <input type="text" name="airline_codes" value="{{ route.airline_codes if route else '' }}"
-            placeholder="SU, DP, S7, U6">
-          <span class="hint">
-            SU=Аэрофлот, DP=Победа, S7=S7, U6=Уральские, N4=Nordwind, 5N=Smartavia
-          </span>
+          <label>Максимальная цена (₽) *</label>
+          <input type="number" name="max_price" id="max_price"
+            value="{{ route.max_price if route else '' }}"
+            placeholder="5000" min="100" step="100" required>
+          <span class="hint">Уведомим, если цена станет ниже этой</span>
         </div>
         <div class="form-group">
-          <label>Конкретные аэропорты вылета</label>
-          <input type="text" name="origin_airports" value="{{ route.origin_airports if route else '' }}"
-            placeholder="SVX">
-          <span class="hint">Оставьте пустым — любой аэропорт из города вылета</span>
-        </div>
-        <div class="form-group">
-          <label>Аэропорты прилёта</label>
-          <input type="text" name="destination_airports" value="{{ route.destination_airports if route else '' }}"
-            placeholder="SVO, VKO, DME, ZIA">
-          <span class="hint">
-            SVO=Шереметьево, DME=Домодедово, VKO=Внуково, ZIA=Жуковский
-          </span>
-        </div>
-        <div></div>
-        <div class="form-group">
-          <label>Время вылета — от</label>
-          <input type="time" name="departure_time_from" value="{{ route.departure_time_from if route else '' }}">
-        </div>
-        <div class="form-group">
-          <label>Время вылета — до</label>
-          <input type="time" name="departure_time_to" value="{{ route.departure_time_to if route else '' }}">
-        </div>
-        <div class="form-group">
-          <label>Время прилёта (расч.) — от</label>
-          <input type="time" name="arrival_time_from" value="{{ route.arrival_time_from if route else '' }}">
-        </div>
-        <div class="form-group">
-          <label>Время прилёта (расч.) — до</label>
-          <input type="time" name="arrival_time_to" value="{{ route.arrival_time_to if route else '' }}">
+          <label>Как часто проверять</label>
+          <select name="interval_minutes" id="interval_minutes">
+            <option value="5" {% if route and route.interval_minutes == 5 %}selected{% endif %}>Каждые 5 минут</option>
+            <option value="10" {% if not route or route.interval_minutes == 10 %}selected{% endif %}>Каждые 10 минут</option>
+          </select>
         </div>
       </div>
-
-      <div class="alert alert-info" style="margin-top:16px">
-        ℹ️ API Aviasales не возвращает время прилёта. Оно рассчитывается как <em>время вылета + длительность рейса</em>.
-        Фильтр по времени прилёта применяется к этому расчётному значению.
+      <div class="alert alert-info" style="margin-top:12px;margin-bottom:0">
+        💡 Пришлём уведомление в Telegram, если цена станет ниже указанной или появится ещё более дешёвый вариант.
       </div>
     </div>
 
-    <div style="margin-top:16px;display:flex;gap:10px">
-      <button class="btn btn-primary" type="submit">
-        {% if route %}💾 Сохранить изменения{% else %}✅ Добавить маршрут{% endif %}
+    <!-- Блок 3: Фильтры -->
+    <div class="form-block">
+      <div class="form-block-title"><span class="step-num">3</span> Фильтры (необязательно)</div>
+
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Прямые рейсы</label>
+        <div style="margin-top:6px">
+          <label class="checkbox-row">
+            <input type="checkbox" name="direct_only" id="direct_only" value="true"
+              {% if route and route.direct_only %}checked{% endif %}>
+            <span>Только прямые рейсы (без пересадок)</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Аэропорты прилёта в Москву</label>
+        <div class="checkbox-group" style="margin-top:6px" id="dest_airports_group">
+          {% set sel_airports = (route.destination_airports or '').split(',') | map('trim') | list if route else [] %}
+          <label class="checkbox-pill">
+            <input type="checkbox" name="dest_ap_all" id="dest_ap_all" value="all"
+              onchange="toggleAllAirports(this)"
+              {% if not route or not route.destination_airports %}checked{% endif %}>
+            Все аэропорты Москвы
+          </label>
+          <label class="checkbox-pill">
+            <input type="checkbox" class="dest-ap-cb" name="dest_ap_SVO" value="SVO"
+              {% if 'SVO' in sel_airports %}checked{% endif %}>
+            Шереметьево (SVO)
+          </label>
+          <label class="checkbox-pill">
+            <input type="checkbox" class="dest-ap-cb" name="dest_ap_VKO" value="VKO"
+              {% if 'VKO' in sel_airports %}checked{% endif %}>
+            Внуково (VKO)
+          </label>
+          <label class="checkbox-pill">
+            <input type="checkbox" class="dest-ap-cb" name="dest_ap_DME" value="DME"
+              {% if 'DME' in sel_airports %}checked{% endif %}>
+            Домодедово (DME)
+          </label>
+          <label class="checkbox-pill">
+            <input type="checkbox" class="dest-ap-cb" name="dest_ap_ZIA" value="ZIA"
+              {% if 'ZIA' in sel_airports %}checked{% endif %}>
+            Жуковский (ZIA)
+          </label>
+        </div>
+        <input type="hidden" name="destination_airports" id="destination_airports"
+          value="{{ route.destination_airports or '' }}">
+        <span class="hint">Оставьте «Все», если аэропорт не важен</span>
+      </div>
+
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Авиакомпании</label>
+        <div class="checkbox-group" style="margin-top:6px" id="airlines_group">
+          {% set sel_airlines = (route.airline_codes or '').split(',') | map('trim') | list if route else [] %}
+          <label class="checkbox-pill">
+            <input type="checkbox" name="airline_all" id="airline_all" value="all"
+              onchange="toggleAllAirlines(this)"
+              {% if not route or not route.airline_codes %}checked{% endif %}>
+            Все авиакомпании
+          </label>
+          <label class="checkbox-pill">
+            <input type="checkbox" class="airline-cb" name="al_SU" value="SU"
+              {% if 'SU' in sel_airlines %}checked{% endif %}>
+            Аэрофлот
+          </label>
+          <label class="checkbox-pill">
+            <input type="checkbox" class="airline-cb" name="al_DP" value="DP"
+              {% if 'DP' in sel_airlines %}checked{% endif %}>
+            Победа
+          </label>
+          <label class="checkbox-pill">
+            <input type="checkbox" class="airline-cb" name="al_S7" value="S7"
+              {% if 'S7' in sel_airlines %}checked{% endif %}>
+            S7 Airlines
+          </label>
+          <label class="checkbox-pill">
+            <input type="checkbox" class="airline-cb" name="al_U6" value="U6"
+              {% if 'U6' in sel_airlines %}checked{% endif %}>
+            Уральские авиалинии
+          </label>
+          <label class="checkbox-pill">
+            <input type="checkbox" class="airline-cb" name="al_N4" value="N4"
+              {% if 'N4' in sel_airlines %}checked{% endif %}>
+            Nordwind
+          </label>
+          <label class="checkbox-pill">
+            <input type="checkbox" class="airline-cb" name="al_5N" value="5N"
+              {% if '5N' in sel_airlines %}checked{% endif %}>
+            Smartavia
+          </label>
+        </div>
+        <input type="hidden" name="airline_codes" id="airline_codes"
+          value="{{ route.airline_codes or '' }}">
+      </div>
+
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Время вылета</label>
+        <div class="time-range" style="margin-top:6px">
+          <span>с</span>
+          <input type="time" name="departure_time_from" style="width:130px"
+            value="{{ route.departure_time_from or '' }}">
+          <span>до</span>
+          <input type="time" name="departure_time_to" style="width:130px"
+            value="{{ route.departure_time_to or '' }}">
+        </div>
+        <span class="hint">Оставьте пустым — любое время</span>
+      </div>
+
+      <div class="form-group">
+        <label>Прилететь</label>
+        <div class="time-range" style="margin-top:6px">
+          <span>с</span>
+          <input type="time" name="arrival_time_from" style="width:130px"
+            value="{{ route.arrival_time_from or '' }}">
+          <span>до</span>
+          <input type="time" name="arrival_time_to" style="width:130px"
+            value="{{ route.arrival_time_to or '' }}">
+        </div>
+        <span class="hint">
+          ⚠️ Travelpayouts API не отдаёт точное время прилёта.
+          Мы рассчитываем его как <em>время вылета + длительность рейса</em>.
+        </span>
+      </div>
+    </div>
+
+    <!-- Блок 4: Уведомления -->
+    <div class="form-block">
+      <div class="form-block-title"><span class="step-num">4</span> Уведомления</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Telegram Chat ID</label>
+          <input type="text" name="telegram_chat_id"
+            value="{{ route.telegram_chat_id if route else '' }}"
+            placeholder="Например: 123456789">
+          <span class="hint">
+            Если оставить пустым — будет использован <code>TELEGRAM_CHAT_ID</code> из настроек.
+            Узнать свой ID можно через <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a>.
+          </span>
+        </div>
+        <div class="form-group">
+          <label>Название мониторинга (необязательно)</label>
+          <input type="text" name="title"
+            value="{{ route.title if route else '' }}"
+            placeholder="Например: Отпуск в июне">
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-primary" type="submit" style="font-size:15px;padding:11px 28px">
+        {% if route %}💾 Сохранить изменения{% else %}🚀 Создать мониторинг{% endif %}
       </button>
-      <a class="btn btn-secondary" href="{% if route %}/route/{{ route.id }}{% else %}/{% endif %}">Отмена</a>
+      <a class="btn btn-ghost" href="{% if route %}/route/{{ route.id }}{% else %}/{% endif %}">Отмена</a>
     </div>
   </form>
 </div>
+
+<script>
+const CITY_MAP = {
+  "екатеринбург": "SVX", "свердловск": "SVX",
+  "москва": "MOW", "мск": "MOW",
+  "санкт-петербург": "LED", "питер": "LED", "спб": "LED", "петербург": "LED",
+  "сочи": "AER", "казань": "KZN", "новосибирск": "OVB",
+  "минеральные воды": "MRV", "минводы": "MRV",
+  "калининград": "KGD", "краснодар": "KRR", "самара": "KUF",
+  "уфа": "UFA", "пермь": "PEE", "тюмень": "TJM", "челябинск": "CEK",
+  "красноярск": "KJA", "иркутск": "IKT", "хабаровск": "KHV",
+  "владивосток": "VVO", "нижний новгород": "GOJ", "ростов": "ROV",
+  "ростов-на-дону": "ROV", "воронеж": "VOZ", "омск": "OMS",
+  "шереметьево": "SVO", "домодедово": "DME", "внуково": "VKO", "жуковский": "ZIA",
+};
+const IATA_LABELS = {
+  "SVX":"Екатеринбург (SVX)","MOW":"Москва (MOW)","LED":"Санкт-Петербург (LED)",
+  "AER":"Сочи (AER)","KZN":"Казань (KZN)","OVB":"Новосибирск (OVB)",
+  "MRV":"Минеральные Воды (MRV)","KGD":"Калининград (KGD)","KRR":"Краснодар (KRR)",
+  "KUF":"Самара (KUF)","UFA":"Уфа (UFA)","PEE":"Пермь (PEE)","TJM":"Тюмень (TJM)",
+  "CEK":"Челябинск (CEK)","KJA":"Красноярск (KJA)","IKT":"Иркутск (IKT)",
+  "KHV":"Хабаровск (KHV)","VVO":"Владивосток (VVO)","GOJ":"Нижний Новгород (GOJ)",
+  "ROV":"Ростов-на-Дону (ROV)","VOZ":"Воронеж (VOZ)","OMS":"Омск (OMS)",
+  "SVO":"Москва · Шереметьево (SVO)","DME":"Москва · Домодедово (DME)",
+  "VKO":"Москва · Внуково (VKO)","ZIA":"Москва · Жуковский (ZIA)",
+};
+
+function resolveIata(val) {
+  const v = val.trim();
+  if (v.length === 3 && /^[a-zA-Z]{3}$/.test(v)) return v.toUpperCase();
+  return CITY_MAP[v.toLowerCase()] || v.toUpperCase();
+}
+
+function setupCityInput(inputId, hiddenId, hintId) {
+  const inp = document.getElementById(inputId);
+  const hid = document.getElementById(hiddenId);
+  const hint = document.getElementById(hintId);
+  if (!inp) return;
+  inp.addEventListener('input', function() {
+    const code = resolveIata(this.value);
+    hid.value = code;
+    hint.textContent = IATA_LABELS[code] || (code.length === 3 ? code : 'Введите город или IATA-код');
+  });
+}
+setupCityInput('origin_input', 'origin_hidden', 'origin_hint');
+setupCityInput('destination_input', 'destination_hidden', 'destination_hint');
+
+// Airport checkboxes → hidden field
+function updateAirports() {
+  const allCb = document.getElementById('dest_ap_all');
+  const cbs = document.querySelectorAll('.dest-ap-cb');
+  if (allCb && allCb.checked) {
+    document.getElementById('destination_airports').value = '';
+    return;
+  }
+  const selected = Array.from(cbs).filter(c => c.checked).map(c => c.value);
+  document.getElementById('destination_airports').value = selected.join(',');
+}
+function toggleAllAirports(cb) {
+  const cbs = document.querySelectorAll('.dest-ap-cb');
+  if (cb.checked) {
+    cbs.forEach(c => { c.checked = false; });
+  }
+  updateAirports();
+}
+document.querySelectorAll('.dest-ap-cb').forEach(cb => {
+  cb.addEventListener('change', function() {
+    if (this.checked) document.getElementById('dest_ap_all').checked = false;
+    const anyChecked = Array.from(document.querySelectorAll('.dest-ap-cb')).some(c => c.checked);
+    if (!anyChecked) document.getElementById('dest_ap_all').checked = true;
+    updateAirports();
+  });
+});
+updateAirports();
+
+// Airline checkboxes → hidden field
+function updateAirlines() {
+  const allCb = document.getElementById('airline_all');
+  const cbs = document.querySelectorAll('.airline-cb');
+  if (allCb && allCb.checked) {
+    document.getElementById('airline_codes').value = '';
+    return;
+  }
+  const selected = Array.from(cbs).filter(c => c.checked).map(c => c.value);
+  document.getElementById('airline_codes').value = selected.join(',');
+}
+function toggleAllAirlines(cb) {
+  const cbs = document.querySelectorAll('.airline-cb');
+  if (cb.checked) { cbs.forEach(c => { c.checked = false; }); }
+  updateAirlines();
+}
+document.querySelectorAll('.airline-cb').forEach(cb => {
+  cb.addEventListener('change', function() {
+    if (this.checked) document.getElementById('airline_all').checked = false;
+    const anyChecked = Array.from(document.querySelectorAll('.airline-cb')).some(c => c.checked);
+    if (!anyChecked) document.getElementById('airline_all').checked = true;
+    updateAirlines();
+  });
+});
+updateAirlines();
+
+// Sync hidden fields on submit
+document.getElementById('routeForm').addEventListener('submit', function() {
+  updateAirports();
+  updateAirlines();
+  // Resolve city names one more time
+  const oCode = resolveIata(document.getElementById('origin_input').value);
+  const dCode = resolveIata(document.getElementById('destination_input').value);
+  document.getElementById('origin_hidden').value = oCode;
+  document.getElementById('destination_hidden').value = dCode;
+});
+
+// Preset button
+function fillPreset() {
+  const today = new Date();
+  const preset = new Date(today.getFullYear(), 5, 18); // June 18
+  const dateStr = preset.toISOString().split('T')[0];
+
+  document.getElementById('origin_input').value = 'Екатеринбург';
+  document.getElementById('origin_hidden').value = 'SVX';
+  document.getElementById('origin_hint').textContent = 'Екатеринбург (SVX)';
+
+  document.getElementById('destination_input').value = 'Москва';
+  document.getElementById('destination_hidden').value = 'MOW';
+  document.getElementById('destination_hint').textContent = 'Москва (MOW)';
+
+  document.querySelector('[name=departure_date]').value = dateStr;
+  document.getElementById('max_price').value = '3000';
+  document.getElementById('interval_minutes').value = '5';
+  document.getElementById('direct_only').checked = true;
+
+  // Airports: VKO + SVO
+  document.getElementById('dest_ap_all').checked = false;
+  document.querySelectorAll('.dest-ap-cb').forEach(c => { c.checked = false; });
+  document.querySelector('[name=dest_ap_VKO]').checked = true;
+  document.querySelector('[name=dest_ap_SVO]').checked = true;
+  updateAirports();
+
+  // Airlines: DP + SU
+  document.getElementById('airline_all').checked = false;
+  document.querySelectorAll('.airline-cb').forEach(c => { c.checked = false; });
+  document.querySelector('[name=al_DP]').checked = true;
+  document.querySelector('[name=al_SU]').checked = true;
+  updateAirlines();
+
+  document.querySelector('[name=arrival_time_from]').value = '05:00';
+  document.querySelector('[name=arrival_time_to]').value = '09:00';
+}
+</script>
 </body>
 </html>

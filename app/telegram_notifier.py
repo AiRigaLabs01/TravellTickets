@@ -26,7 +26,25 @@ def _fmt_dt(dt: datetime | None) -> str:
 def _fmt_date(dt: datetime | None) -> str:
     if dt is None:
         return "—"
-    return dt.strftime("%d.%m.%Y")
+    months = ["", "января","февраля","марта","апреля","мая","июня",
+              "июля","августа","сентября","октября","ноября","декабря"]
+    return f"{dt.day} {months[dt.month]} {dt.year}"
+
+
+def _airline_name(code: str) -> str:
+    from app.city_codes import AIRLINE_NAMES
+    name = AIRLINE_NAMES.get(code.upper(), "")
+    if name:
+        return f"{name} ({code})"
+    return code
+
+
+def _city_label(iata: str) -> str:
+    from app.city_codes import IATA_TO_CITY
+    name = IATA_TO_CITY.get(iata.upper(), "")
+    if name:
+        return f"{name} ({iata})"
+    return iata
 
 
 def build_notification_text(route: Any, flight: dict) -> str:
@@ -34,34 +52,43 @@ def build_notification_text(route: Any, flight: dict) -> str:
     arr_dt = flight.get("estimated_arrival_at")
     duration = flight.get("duration", 0) or 0
     arrival_note = ", рассчитано" if flight.get("is_estimated_arrival") else ""
+    transfers = flight.get("transfers", 0)
+    transfers_str = "нет" if transfers == 0 else str(transfers)
+
+    origin_city = _city_label(route.origin)
+    dest_city = _city_label(route.destination)
 
     lines = [
-        "🔥 Найден подходящий билет\n",
-        f"Маршрут: {route.origin} → {route.destination}",
-        f"Аэропорт: {flight.get('origin_airport', route.origin)} → {flight.get('destination_airport', route.destination)}",
-        f"Дата: {_fmt_date(dep_dt)}",
-        f"Рейс: {flight.get('airline', '')} {flight.get('flight_number', '')}",
-        f"Авиакомпания: {flight.get('airline', '—')}",
-        f"Продавец: {flight.get('gate', '—')}",
-        f"Вылет: {_fmt_dt(dep_dt)}",
-        f"Прилёт: {_fmt_dt(arr_dt)}{arrival_note}",
-        f"Длительность: {_format_duration(duration)}",
-        f"Пересадки: {flight.get('transfers', 0)}",
-        f"Цена: {int(flight.get('price', 0)):,} ₽".replace(",", " "),
+        "🔥 <b>Найден билет по вашим условиям</b>\n",
+        f"{origin_city} → {dest_city}",
+        f"{_fmt_date(dep_dt)}\n",
+        f"💰 Цена: <b>{int(flight.get('price', 0)):,} ₽</b>".replace(",", "\u00a0"),
+        f"✈️ Рейс: {_airline_name(flight.get('airline', ''))} {flight.get('flight_number', '')}",
+        f"🏢 Аэропорт: {flight.get('origin_airport', route.origin)} → {flight.get('destination_airport', route.destination)}",
+        f"🛫 Вылет: {_fmt_dt(dep_dt)}",
+        f"🛬 Прилёт: {_fmt_dt(arr_dt)}{arrival_note}",
     ]
+
+    if duration:
+        lines.append(f"⏱ В пути: {_format_duration(duration)}")
+
+    lines.append(f"🔀 Пересадки: {transfers_str}")
+
+    if flight.get("gate"):
+        lines.append(f"🏪 Продавец: {flight['gate']}")
 
     aviasales_url = flight.get("aviasales_url", "")
     yandex_url = flight.get("yandex_travel_url", "")
 
     if aviasales_url or yandex_url:
-        lines.append("\nОткрыть:")
+        lines.append("\n🔗 Открыть и проверить:")
         if aviasales_url:
             lines.append(f"• <a href='{aviasales_url}'>Aviasales</a>")
         if yandex_url:
             lines.append(f"• <a href='{yandex_url}'>Яндекс Путешествия</a>")
 
     lines.append(
-        "\n<i>⚠️ Цены из кэша Aviasales. Уточняйте актуальную цену и наличие у продавца.</i>"
+        "\n<i>⚠️ Цены из кэша Aviasales — уточняйте актуальную цену у продавца перед покупкой.</i>"
     )
 
     return "\n".join(lines)
