@@ -171,6 +171,13 @@ def _route_card(route: TrackedRoute, last_check: PriceCheck | None = None) -> st
     return "\n".join(lines)
 
 
+async def _send_route_created_message(message: Message, route: TrackedRoute, route_id: int, last: PriceCheck | None = None, extra: str | None = None):
+    text = "✅ <b>Мониторинг создан</b>\n\n" + _route_card(route, last)
+    if extra:
+        text += f"\n\n{extra}"
+    await message.answer(text, parse_mode="HTML", reply_markup=route_actions(route_id))
+
+
 class NewRouteStates(StatesGroup):
     origin = State()
     destination = State()
@@ -309,7 +316,7 @@ def _register_handlers(dp: Dispatcher):
         direct = message.text.strip().lower() in ("да", "yes", "y", "д", "1", "true")
         data = await state.get_data()
         await state.clear()
-        status_message = await message.answer("⏳ <b>Мониторинг создан. Проверяю текущие цены...</b>", parse_mode="HTML", reply_markup=main_menu())
+        await message.answer("⏳ <b>Мониторинг создан. Проверяю текущие цены...</b>", parse_mode="HTML", reply_markup=main_menu())
         db = SessionLocal()
         try:
             route = TrackedRoute(
@@ -333,13 +340,13 @@ def _register_handlers(dp: Dispatcher):
             db = SessionLocal()
             route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id, TrackedRoute.telegram_chat_id == _chat_id(message)).first()
             db.close()
-            await status_message.edit_text("✅ <b>Мониторинг создан</b>\n\n" + _route_card(route) + f"\n\n⚠️ Не удалось сразу проверить цены: {exc}", parse_mode="HTML", reply_markup=route_actions(route_id))
+            await _send_route_created_message(message, route, route_id, None, f"⚠️ Не удалось сразу проверить цены: {exc}")
             return
         db = SessionLocal()
         try:
             route = db.query(TrackedRoute).filter(TrackedRoute.id == route_id, TrackedRoute.telegram_chat_id == _chat_id(message)).first()
             last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route_id).order_by(PriceCheck.checked_at.desc()).first()
-            await status_message.edit_text("✅ <b>Мониторинг создан</b>\n\n" + _route_card(route, last), parse_mode="HTML", reply_markup=route_actions(route_id))
+            await _send_route_created_message(message, route, route_id, last)
         finally:
             db.close()
 
