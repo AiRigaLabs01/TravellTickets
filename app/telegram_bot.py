@@ -96,6 +96,16 @@ def resolve_city(text: str) -> str | None:
     return code.upper() if len(code) == 3 and code.isalpha() else None
 
 
+def parse_interval(text: str | None) -> int | None:
+    try:
+        value = int((text or "").strip())
+    except ValueError:
+        return None
+    if value < 1 or value > 1440:
+        return None
+    return value
+
+
 def parse_passengers(text: str) -> tuple[int, int, int] | None:
     t = (text or "").strip().lower()
     presets = {
@@ -324,14 +334,15 @@ def register_handlers(dp: Dispatcher):
             return
         await state.update_data(max_price=price)
         await state.set_state(NewRouteStates.interval)
-        await message.answer("Интервал проверки: <b>5</b> или <b>10</b> минут?", parse_mode="HTML", reply_markup=kb([["5", "10"]]))
+        await message.answer("Введите интервал проверки в минутах. Например: <b>5</b>, <b>10</b>, <b>15</b> или <b>30</b>", parse_mode="HTML")
 
     @dp.message(NewRouteStates.interval)
     async def new_interval(message: Message, state: FSMContext):
-        if message.text.strip() not in ("5", "10"):
-            await message.answer("Введите 5 или 10:")
+        interval = parse_interval(message.text)
+        if interval is None:
+            await message.answer("Введите число минут от 1 до 1440. Например: <b>10</b>", parse_mode="HTML")
             return
-        await state.update_data(interval_minutes=int(message.text.strip()))
+        await state.update_data(interval_minutes=interval)
         await state.set_state(NewRouteStates.direct_only)
         await message.answer("Только прямые рейсы?", reply_markup=kb([["Да", "Нет"]]))
 
@@ -451,14 +462,15 @@ def register_handlers(dp: Dispatcher):
 
     @dp.callback_query(F.data.startswith("edit_interval:"))
     async def cb_edit_interval(callback, state: FSMContext):
-        await ask_edit(callback, state, int(callback.data.split(":", 1)[1]), EditRouteStates.interval, "Введите интервал: <b>5</b> или <b>10</b>")
+        await ask_edit(callback, state, int(callback.data.split(":", 1)[1]), EditRouteStates.interval, "Введите новый интервал проверки в минутах. Например: <b>5</b>, <b>10</b>, <b>15</b> или <b>30</b>")
 
     @dp.message(EditRouteStates.interval)
     async def edit_interval(message: Message, state: FSMContext):
-        if message.text.strip() not in ("5", "10"):
-            await message.answer("Введите 5 или 10")
+        interval = parse_interval(message.text)
+        if interval is None:
+            await message.answer("Введите число минут от 1 до 1440. Например: <b>10</b>", parse_mode="HTML")
             return
-        data = await state.get_data(); await state.clear(); await update_route(message, data["edit_route_id"], interval_minutes=int(message.text.strip()))
+        data = await state.get_data(); await state.clear(); await update_route(message, data["edit_route_id"], interval_minutes=interval)
 
     @dp.callback_query(F.data.startswith("edit_direct:"))
     async def cb_edit_direct(callback):
