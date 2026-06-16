@@ -68,14 +68,11 @@ def build_notification_text(route: Any, flight: dict) -> str:
     if flight.get("gate"):
         lines.append(f"🏪 Продавец: {flight['gate']}")
 
-    aviasales_url = flight.get("aviasales_url", "")
     yandex_url = flight.get("yandex_travel_url", "")
-    if aviasales_url or yandex_url:
+    if yandex_url:
         lines.append("\n🔗 Открыть и проверить:")
-        if aviasales_url:
-            lines.append(f"• <a href='{aviasales_url}'>Aviasales</a>")
-        if yandex_url:
-            lines.append(f"• <a href='{yandex_url}'>Яндекс Путешествия</a>")
+        lines.append(f"• <a href='{yandex_url}'>Яндекс Путешествия</a>")
+
     lines.append("\n<i>⚠️ Цены из кэша Aviasales — уточняйте актуальную цену у продавца перед покупкой.</i>")
     return "\n".join(lines)
 
