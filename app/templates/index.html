@@ -13,155 +13,56 @@
 </nav>
 
 {% if not routes %}
-<div class="hero">
-  <h1>Мониторинг дешёвых авиабилетов</h1>
-  <p>Проверяем цены Aviasales каждые 5–10 минут и присылаем уведомление в Telegram, когда появляется нужная цена.</p>
-  <a class="btn-hero" href="/route/new">Создать мониторинг</a>
-</div>
+<div class="hero"><h1>Мониторинг дешёвых авиабилетов</h1><p>Проверяем цены Aviasales каждые 5–10 минут и присылаем уведомление в Telegram, когда появляется нужная цена.</p><a class="btn-hero" href="/route/new">Создать мониторинг</a></div>
 {% else %}
 <div style="background:var(--primary);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-  <div style="color:#fff">
-    <div style="font-size:15px;font-weight:700">Мониторинг дешёвых авиабилетов</div>
-    <div style="font-size:12px;opacity:.8">Проверяем цены каждые 5–10 минут, отправляем в Telegram</div>
-  </div>
+  <div style="color:#fff"><div style="font-size:15px;font-weight:700">Мониторинг дешёвых авиабилетов</div><div style="font-size:12px;opacity:.8">Проверяем цены каждые 5–10 минут, отправляем в Telegram</div></div>
   <a class="btn" style="background:#fff;color:var(--primary);font-weight:700" href="/route/new">+ Создать мониторинг</a>
 </div>
 {% endif %}
 
 <div class="container">
-
-  {% if routes %}
-  <div class="alert alert-warning" style="margin-bottom:18px">
-    ⚠️ Цены получены из кэша Aviasales. Актуальность и наличие билета всегда уточняйте непосредственно у продавца перед покупкой.
-  </div>
-
-  <div class="section-header">
-    <h2>Активные маршруты ({{ routes | length }})</h2>
-  </div>
+{% if routes %}
+  <div class="alert alert-warning" style="margin-bottom:18px">⚠️ Цены получены из кэша Aviasales. Актуальность и наличие билета всегда уточняйте непосредственно у продавца перед покупкой.</div>
+  <div class="section-header"><h2>Активные маршруты ({{ routes | length }})</h2></div>
 
   {% for route in routes %}
   {% set last = last_checks.get(route.id) %}
   <div class="card" style="padding:18px 20px">
-
     <div class="route-card-header">
       <div style="flex:1;min-width:0">
         <div class="route-title-row">
           <a href="/route/{{ route.id }}">{{ route.origin_city }} → {{ route.dest_city }}</a>
-          {% if route.is_active %}
-            <span class="badge badge-active">активен</span>
-          {% else %}
-            <span class="badge badge-inactive">остановлен</span>
-          {% endif %}
-          {% if route.last_error %}
-            <span class="badge badge-error" title="{{ route.last_error }}">⚠ ошибка</span>
-          {% endif %}
+          {% if route.is_active %}<span class="badge badge-active">активен</span>{% else %}<span class="badge badge-inactive">остановлен</span>{% endif %}
+          {% if route.last_error %}<span class="badge badge-error" title="{{ route.last_error }}">⚠ ошибка</span>{% endif %}
         </div>
         <div class="route-meta">
-          <span>📅 {{ route.departure_date }}</span>
+          <span>📅 {{ route.departure_date | fmt_route_date }}</span>
           <span>💰 до {{ route.max_price | fmt_price }}</span>
           <span>⏱ каждые {{ route.interval_minutes }} мин</span>
           {% if route.direct_only %}<span>✈️ только прямые</span>{% endif %}
-          {% if route.last_checked_at %}
-            <span>🕐 {{ route.last_checked_at | fmt_dt }}</span>
-          {% else %}
-            <span class="badge badge-info" style="font-size:11px">ещё не проверялся</span>
-          {% endif %}
+          {% if route.last_checked_at %}<span>🕐 {{ route.last_checked_at | fmt_dt }}</span>{% else %}<span class="badge badge-info" style="font-size:11px">ещё не проверялся</span>{% endif %}
         </div>
-
         {% set filters = [] %}
-        {% if route.destination_airports %}
-          {% for ap in route.destination_airports.split(',') %}{% set _ = filters.append(ap.strip()) %}{% endfor %}
-        {% endif %}
-        {% if route.airline_codes %}
-          {% for al in route.airline_codes.split(',') %}{% set _ = filters.append(al.strip()) %}{% endfor %}
-        {% endif %}
-        {% if filters %}
-        <div class="filters-summary">
-          {% if route.destination_airports %}
-            {% for ap in route.destination_airports.split(',') %}
-              <span class="tag">{{ airport_label(ap.strip()) }}</span>
-            {% endfor %}
-          {% endif %}
-          {% if route.airline_codes %}
-            {% for al in route.airline_codes.split(',') %}
-              <span class="tag tag-airline">{{ airline_label(al.strip()) }}</span>
-            {% endfor %}
-          {% endif %}
-          {% if route.departure_time_from or route.departure_time_to %}
-            <span class="tag">вылет {{ route.departure_time_from or "—" }}–{{ route.departure_time_to or "—" }}</span>
-          {% endif %}
-          {% if route.arrival_time_from or route.arrival_time_to %}
-            <span class="tag">прилёт {{ route.arrival_time_from or "—" }}–{{ route.arrival_time_to or "—" }}</span>
-          {% endif %}
-        </div>
-        {% endif %}
+        {% if route.destination_airports %}{% for ap in route.destination_airports.split(',') %}{% set _ = filters.append(ap.strip()) %}{% endfor %}{% endif %}
+        {% if route.airline_codes %}{% for al in route.airline_codes.split(',') %}{% set _ = filters.append(al.strip()) %}{% endfor %}{% endif %}
+        {% if filters %}<div class="filters-summary">
+          {% if route.destination_airports %}{% for ap in route.destination_airports.split(',') %}<span class="tag">{{ airport_label(ap.strip()) }}</span>{% endfor %}{% endif %}
+          {% if route.airline_codes %}{% for al in route.airline_codes.split(',') %}<span class="tag tag-airline">{{ airline_label(al.strip()) }}</span>{% endfor %}{% endif %}
+          {% if route.departure_time_from or route.departure_time_to %}<span class="tag">вылет {{ route.departure_time_from or "—" }}–{{ route.departure_time_to or "—" }}</span>{% endif %}
+          {% if route.arrival_time_from or route.arrival_time_to %}<span class="tag">прилёт {{ route.arrival_time_from or "—" }}–{{ route.arrival_time_to or "—" }}</span>{% endif %}
+        </div>{% endif %}
       </div>
-
-      <div class="price-display" style="min-width:110px">
-        {% if route.last_best_price %}
-          <div class="price-big">{{ route.last_best_price | fmt_price }}</div>
-          <div class="price-max">лучшая цена</div>
-        {% else %}
-          <div class="price-na">нет данных</div>
-        {% endif %}
-      </div>
+      <div class="price-display" style="min-width:110px">{% if route.last_best_price %}<div class="price-big">{{ route.last_best_price | fmt_price }}</div><div class="price-max">лучшая цена</div>{% else %}<div class="price-na">нет данных</div>{% endif %}</div>
     </div>
-
-    {% if last %}
-    <hr class="route-divider">
-    <div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Последний найденный рейс</div>
-    <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:13px">
-      <span><strong>{{ last.airline }} {{ last.flight_number }}</strong></span>
-      <span>{{ last.origin_airport or '—' }} → {{ last.destination_airport or '—' }}</span>
-      <span>✈ вылет {{ last.departure_at | fmt_time }}</span>
-      <span>🛬 прилёт {{ last.estimated_arrival_at | fmt_time }}{% if last.is_estimated_arrival %}&nbsp;<span style="color:var(--muted)" title="Рассчитано по длительности рейса">~</span>{% endif %}</span>
-      {% if last.gate %}<span>🏪 {{ last.gate }}</span>{% endif %}
-      <span>
-        {% if last.aviasales_url %}<a href="{{ last.aviasales_url }}" target="_blank">Aviasales</a>{% endif %}
-        {% if last.yandex_travel_url %} · <a href="{{ last.yandex_travel_url }}" target="_blank">Яндекс</a>{% endif %}
-      </span>
-    </div>
-    {% endif %}
-
-    <div class="action-row">
-      <form method="post" action="/route/{{ route.id }}/check" style="display:contents">
-        <button class="btn btn-primary btn-sm" type="submit">🔍 Проверить</button>
-      </form>
-      <a class="btn btn-secondary btn-sm" href="/route/{{ route.id }}">📋 История</a>
-      <a class="btn btn-secondary btn-sm" href="/route/{{ route.id }}/edit">✏️ Изменить</a>
-      <form method="post" action="/route/{{ route.id }}/toggle" style="display:contents">
-        {% if route.is_active %}
-          <button class="btn btn-ghost btn-sm" type="submit">⏸ Пауза</button>
-        {% else %}
-          <button class="btn btn-success btn-sm" type="submit">▶ Возобновить</button>
-        {% endif %}
-      </form>
-      <form method="post" action="/route/{{ route.id }}/delete" style="display:contents"
-            onsubmit="return confirm('Удалить маршрут «{{ route.title }}»?')">
-        <button class="btn btn-danger btn-sm" type="submit">🗑</button>
-      </form>
-    </div>
-
+    {% if last %}<hr class="route-divider"><div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Последний найденный рейс</div><div style="display:flex;flex-wrap:wrap;gap:16px;font-size:13px"><span><strong>{{ last.airline }} {{ last.flight_number }}</strong></span><span>{{ last.origin_airport or '—' }} → {{ last.destination_airport or '—' }}</span><span>✈ вылет {{ last.departure_at | fmt_time }}</span><span>🛬 прилёт {{ last.estimated_arrival_at | fmt_time }}{% if last.is_estimated_arrival %}&nbsp;<span style="color:var(--muted)" title="Рассчитано по длительности рейса">~</span>{% endif %}</span>{% if last.gate %}<span>🏪 {{ last.gate }}</span>{% endif %}<span>{% if last.aviasales_url %}<a href="{{ last.aviasales_url }}" target="_blank">Aviasales</a>{% endif %}{% if last.yandex_travel_url %} · <a href="{{ last.yandex_travel_url }}" target="_blank">Яндекс</a>{% endif %}</span></div>{% endif %}
+    <div class="action-row"><form method="post" action="/route/{{ route.id }}/check" style="display:contents"><button class="btn btn-primary btn-sm" type="submit">🔍 Проверить</button></form><a class="btn btn-secondary btn-sm" href="/route/{{ route.id }}">📋 История</a><a class="btn btn-secondary btn-sm" href="/route/{{ route.id }}/edit">✏️ Изменить</a><form method="post" action="/route/{{ route.id }}/toggle" style="display:contents">{% if route.is_active %}<button class="btn btn-ghost btn-sm" type="submit">⏸ Пауза</button>{% else %}<button class="btn btn-success btn-sm" type="submit">▶ Возобновить</button>{% endif %}</form><form method="post" action="/route/{{ route.id }}/delete" style="display:contents" onsubmit="return confirm('Удалить маршрут «{{ route.title }}»?')"><button class="btn btn-danger btn-sm" type="submit">🗑</button></form></div>
   </div>
   {% endfor %}
-
-  {% else %}
-
-  <div class="empty-state">
-    <div class="icon">🛫</div>
-    <h3>Нет активных маршрутов</h3>
-    <p>Добавьте первый маршрут, и мы начнём следить за ценами. Когда появится подходящий билет — пришлём уведомление в Telegram.</p>
-    <div class="example">Пример: Екатеринбург → Москва, 18 июня, до 3000 ₽</div>
-    <br>
-    <a class="btn btn-primary" href="/route/new">✈️ Добавить маршрут</a>
-  </div>
-
-  {% endif %}
-
-  <div class="disclaimer">
-    ℹ️ Данные предоставляются через Travelpayouts / Aviasales Data API и могут быть кэшированными.
-    Перед покупкой всегда проверяйте актуальную цену и наличие билета непосредственно у авиакомпании или агентства.
-  </div>
+{% else %}
+  <div class="empty-state"><div class="icon">🛫</div><h3>Нет активных маршрутов</h3><p>Добавьте первый маршрут, и мы начнём следить за ценами. Когда появится подходящий билет — пришлём уведомление в Telegram.</p><div class="example">Пример: Екатеринбург → Москва, 18.06, до 3000 ₽</div><br><a class="btn btn-primary" href="/route/new">✈️ Добавить маршрут</a></div>
+{% endif %}
+  <div class="disclaimer">ℹ️ Данные предоставляются через Travelpayouts / Aviasales Data API и могут быть кэшированными. Перед покупкой всегда проверяйте актуальную цену и наличие билета непосредственно у авиакомпании или агентства.</div>
 </div>
 </body>
 </html>
