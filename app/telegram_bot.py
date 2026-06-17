@@ -1,16 +1,20 @@
 import logging
 
 from aiogram import Bot, Dispatcher, F
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup
+from sqlalchemy import or_
 
 from app.city_codes import city_label, resolve_iata
 from app.config import APP_BASE_URL, TELEGRAM_BOT_TOKEN
 from app.database import SessionLocal
 from app.date_utils import format_msk_time, format_route_date, format_route_date_long, parse_route_date
+from app.auth import create_telegram_access_token, normalize_telegram_username
+from app.locations import search_locations
 from app.models import Notification, PriceCheck, TrackedRoute
 from app.scheduler import check_route, schedule_route, unschedule_route
 from app.yandex_links import build_yandex_travel_url_for_route
@@ -62,17 +66,37 @@ def public_app_url() -> bool:
 
 
 def owned_routes(db, message: Message):
-    return db.query(TrackedRoute).filter(TrackedRoute.is_active == True, TrackedRoute.telegram_chat_id == chat_id(message))
+    username = normalize_telegram_username(creator_username(message))
+    filters = [TrackedRoute.telegram_chat_id == chat_id(message)]
+    if username:
+        filters.extend([TrackedRoute.creator_username == username, TrackedRoute.notification_username == username])
+    return db.query(TrackedRoute).filter(TrackedRoute.is_active == True, or_(*filters))
 
 
 def owned_route(db, message: Message, route_id: int):
-    return db.query(TrackedRoute).filter(TrackedRoute.id == route_id, TrackedRoute.telegram_chat_id == chat_id(message)).first()
+    username = normalize_telegram_username(creator_username(message))
+    filters = [TrackedRoute.telegram_chat_id == chat_id(message)]
+    if username:
+        filters.extend([TrackedRoute.creator_username == username, TrackedRoute.notification_username == username])
+    return db.query(TrackedRoute).filter(TrackedRoute.id == route_id, or_(*filters)).first()
 
 
-def route_actions(route: TrackedRoute) -> InlineKeyboardMarkup:
+def route_web_url(route: TrackedRoute, message: Message | None = None) -> str:
+    link_chat_id = chat_id(message) if message else route.telegram_chat_id
+    link_username = creator_username(message) if message else route.creator_username
+    token = create_telegram_access_token(link_chat_id, link_username, route.id)
+    return f"{APP_BASE_URL}/tg/route/{route.id}?token={token}"
+
+
+def monitorings_web_url(message: Message) -> str:
+    token = create_telegram_access_token(chat_id(message), creator_username(message))
+    return f"{APP_BASE_URL}/tg/monitorings?token={token}"
+
+
+def route_actions(route: TrackedRoute, message: Message | None = None) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text="🔎 Проверить сейчас", callback_data=f"check:{route.id}"), InlineKeyboardButton(text="🔗 Яндекс", url=build_yandex_travel_url_for_route(route))]]
     if public_app_url():
-        rows.append([InlineKeyboardButton(text="📈 История", url=f"{APP_BASE_URL}/route/{route.id}")])
+        rows.append([InlineKeyboardButton(text="📈 История", url=route_web_url(route, message))])
     rows.append([InlineKeyboardButton(text="✏️ Изменить", callback_data=f"edit:{route.id}"), InlineKeyboardButton(text="⏸ Остановить", callback_data=f"stop:{route.id}")])
     rows.append([InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete:{route.id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -96,12 +120,41 @@ def resolve_city(text: str) -> str | None:
     return code.upper() if len(code) == 3 and code.isalpha() else None
 
 
+def location_choices(text: str) -> list[tuple[str, str]]:
+    return [(item["label"], item["value"]) for item in search_locations(text, limit=6)]
+
+
+def location_keyboard(text: str) -> ReplyKeyboardMarkup | None:
+    choices = location_choices(text)
+    if not choices:
+        return None
+    return kb([[label] for label, _ in choices])
+
+
+def resolve_location(text: str) -> str | None:
+    raw = (text or "").strip()
+    for label, value in location_choices(raw):
+        if raw == label or raw.upper() == value.upper():
+            return value.upper()
+    return resolve_city(raw)
+
+
+def should_offer_location_choices(text: str) -> bool:
+    raw = (text or "").strip()
+    if len(raw) == 3 and raw.isalpha():
+        return False
+    choices = location_choices(raw)
+    if len(choices) <= 1:
+        return False
+    return not any(raw == label or raw.upper() == value.upper() for label, value in choices)
+
+
 def parse_interval(text: str | None) -> int | None:
     try:
         value = int((text or "").strip())
     except ValueError:
         return None
-    if value < 1 or value > 1440:
+    if value < 5 or value > 15:
         return None
     return value
 
@@ -188,7 +241,7 @@ async def send_route(message: Message, route_id: int, prefix: str = "📊 <b>Р�
         if not r:
             return
         last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route_id).order_by(PriceCheck.checked_at.desc()).first()
-        await message.answer(f"{prefix}\n\n" + route_card(r, last), parse_mode="HTML", reply_markup=route_actions(r))
+        await message.answer(f"{prefix}\n\n" + route_card(r, last), parse_mode="HTML", reply_markup=route_actions(r, message))
     finally:
         db.close()
 
@@ -234,7 +287,7 @@ class EditRouteStates(StatesGroup):
 def create_bot() -> tuple[Bot, Dispatcher]:
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
-    b = Bot(token=TELEGRAM_BOT_TOKEN)
+    b = Bot(token=TELEGRAM_BOT_TOKEN, session=AiohttpSession(timeout=60))
     d = Dispatcher(storage=MemoryStorage())
     register_handlers(d)
     return b, d
@@ -259,9 +312,12 @@ def register_handlers(dp: Dispatcher):
 
     @dp.message(NewRouteStates.origin)
     async def new_origin(message: Message, state: FSMContext):
-        code = resolve_city(message.text)
+        if should_offer_location_choices(message.text):
+            await message.answer("Выберите город или конкретный аэропорт из справочника:", reply_markup=location_keyboard(message.text))
+            return
+        code = resolve_location(message.text)
         if not code:
-            await message.answer("Не понял город вылета. Введите, например: <b>Екатеринбург</b>, <b>Екат</b> или <b>SVX</b>", parse_mode="HTML")
+            await message.answer("Не понял город вылета. Выберите вариант из справочника или введите IATA-код.", parse_mode="HTML", reply_markup=location_keyboard(message.text))
             return
         await state.update_data(origin=code)
         await state.set_state(NewRouteStates.destination)
@@ -269,9 +325,12 @@ def register_handlers(dp: Dispatcher):
 
     @dp.message(NewRouteStates.destination)
     async def new_destination(message: Message, state: FSMContext):
-        code = resolve_city(message.text)
+        if should_offer_location_choices(message.text):
+            await message.answer("Выберите город или конкретный аэропорт из справочника:", reply_markup=location_keyboard(message.text))
+            return
+        code = resolve_location(message.text)
         if not code:
-            await message.answer("Не понял город назначения. Введите, например: <b>Москва</b>, <b>Моск</b> или <b>MOW</b>", parse_mode="HTML")
+            await message.answer("Не понял город назначения. Выберите вариант из справочника или введите IATA-код.", parse_mode="HTML", reply_markup=location_keyboard(message.text))
             return
         await state.update_data(destination=code)
         await state.set_state(NewRouteStates.trip_type)
@@ -334,13 +393,13 @@ def register_handlers(dp: Dispatcher):
             return
         await state.update_data(max_price=price)
         await state.set_state(NewRouteStates.interval)
-        await message.answer("Введите интервал проверки в минутах. Например: <b>5</b>, <b>10</b>, <b>15</b> или <b>30</b>", parse_mode="HTML")
+        await message.answer("Введите интервал проверки в минутах от <b>5</b> до <b>15</b>. Можно указать любое число в этом диапазоне.", parse_mode="HTML")
 
     @dp.message(NewRouteStates.interval)
     async def new_interval(message: Message, state: FSMContext):
         interval = parse_interval(message.text)
         if interval is None:
-            await message.answer("Введите число минут от 1 до 1440. Например: <b>10</b>", parse_mode="HTML")
+            await message.answer("Введите число минут от <b>5</b> до <b>15</b>. Например: <b>10</b>", parse_mode="HTML")
             return
         await state.update_data(interval_minutes=interval)
         await state.set_state(NewRouteStates.direct_only)
@@ -375,10 +434,13 @@ def register_handlers(dp: Dispatcher):
             if not routes:
                 await message.answer("Нет активных мониторингов. Нажмите «➕ Создать мониторинг».", reply_markup=main_menu())
                 return
-            await message.answer("📋 <b>Ваши активные мониторинги</b>", parse_mode="HTML", reply_markup=main_menu())
+            web_markup = None
+            if public_app_url():
+                web_markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🌐 Открыть в вебе", url=monitorings_web_url(message))]])
+            await message.answer("📋 <b>Ваши активные мониторинги</b>", parse_mode="HTML", reply_markup=web_markup or main_menu())
             for r in routes:
                 last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == r.id).order_by(PriceCheck.checked_at.desc()).first()
-                await message.answer(route_card(r, last), parse_mode="HTML", reply_markup=route_actions(r))
+                await message.answer(route_card(r, last), parse_mode="HTML", reply_markup=route_actions(r, message))
         finally:
             db.close()
 
@@ -397,9 +459,12 @@ def register_handlers(dp: Dispatcher):
 
     @dp.message(EditRouteStates.origin)
     async def edit_origin(message: Message, state: FSMContext):
-        code = resolve_city(message.text)
+        if should_offer_location_choices(message.text):
+            await message.answer("Выберите город или конкретный аэропорт из справочника:", reply_markup=location_keyboard(message.text))
+            return
+        code = resolve_location(message.text)
         if not code:
-            await message.answer("Не понял город вылета.")
+            await message.answer("Не понял город вылета. Выберите вариант из справочника или введите IATA-код.", reply_markup=location_keyboard(message.text))
             return
         data = await state.get_data(); await state.clear(); await update_route(message, data["edit_route_id"], reset=True, origin=code)
 
@@ -409,9 +474,12 @@ def register_handlers(dp: Dispatcher):
 
     @dp.message(EditRouteStates.destination)
     async def edit_destination(message: Message, state: FSMContext):
-        code = resolve_city(message.text)
+        if should_offer_location_choices(message.text):
+            await message.answer("Выберите город или конкретный аэропорт из справочника:", reply_markup=location_keyboard(message.text))
+            return
+        code = resolve_location(message.text)
         if not code:
-            await message.answer("Не понял город назначения.")
+            await message.answer("Не понял город назначения. Выберите вариант из справочника или введите IATA-код.", reply_markup=location_keyboard(message.text))
             return
         data = await state.get_data(); await state.clear(); await update_route(message, data["edit_route_id"], reset=True, destination=code)
 
@@ -462,13 +530,13 @@ def register_handlers(dp: Dispatcher):
 
     @dp.callback_query(F.data.startswith("edit_interval:"))
     async def cb_edit_interval(callback, state: FSMContext):
-        await ask_edit(callback, state, int(callback.data.split(":", 1)[1]), EditRouteStates.interval, "Введите новый интервал проверки в минутах. Например: <b>5</b>, <b>10</b>, <b>15</b> или <b>30</b>")
+        await ask_edit(callback, state, int(callback.data.split(":", 1)[1]), EditRouteStates.interval, "Введите новый интервал проверки в минутах от <b>5</b> до <b>15</b>. Можно указать любое число в этом диапазоне.")
 
     @dp.message(EditRouteStates.interval)
     async def edit_interval(message: Message, state: FSMContext):
         interval = parse_interval(message.text)
         if interval is None:
-            await message.answer("Введите число минут от 1 до 1440. Например: <b>10</b>", parse_mode="HTML")
+            await message.answer("Введите число минут от <b>5</b> до <b>15</b>. Например: <b>10</b>", parse_mode="HTML")
             return
         data = await state.get_data(); await state.clear(); await update_route(message, data["edit_route_id"], interval_minutes=interval)
 

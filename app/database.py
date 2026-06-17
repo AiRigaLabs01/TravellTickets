@@ -81,5 +81,8 @@ def init_db():
             elif not user.is_admin:
                 user.is_admin = True
                 db.commit()
+            db.query(models.WebUser).filter(models.WebUser.is_admin == False).delete(synchronize_session=False)
+            db.query(models.WebUser).filter(models.WebUser.username == "codex_test_1781652740").delete(synchronize_session=False)
+            db.commit()
     finally:
         db.close()

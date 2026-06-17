@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.city_codes import airline_label, airport_label, city_label, resolve_iata
@@ -17,7 +18,7 @@ from app.database import SessionLocal, get_db, init_db
 from app.date_utils import format_msk_datetime, format_msk_time, format_route_date, parse_route_date
 from app.locations import search_locations
 from app.models import Notification, PriceCheck, TrackedRoute, WebUser
-from app.auth import find_telegram_chat_id, get_current_web_user, normalize_telegram_username
+from app.auth import find_telegram_chat_id, get_current_web_user, normalize_telegram_username, verify_telegram_access_token
 from app.scheduler import check_route, load_all_routes, schedule_route, scheduler, unschedule_route
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -139,6 +140,27 @@ def _routes_for_user(db: Session, user):
     return query
 
 
+def _routes_for_telegram_payload(db: Session, payload: dict):
+    chat_id = str(payload.get("chat_id") or "")
+    username = normalize_telegram_username(payload.get("telegram_username"))
+    filters = [TrackedRoute.telegram_chat_id == chat_id]
+    if username:
+        filters.extend(
+            [
+                TrackedRoute.creator_username == username,
+                TrackedRoute.notification_username == username,
+            ]
+        )
+    return db.query(TrackedRoute).filter(or_(*filters))
+
+
+def _telegram_payload_or_403(token: str | None) -> dict:
+    payload = verify_telegram_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=403, detail="Telegram link is expired or invalid")
+    return payload
+
+
 def _notification_label(route):
     mode = getattr(route, "notification_mode", None) or "telegram"
     if mode == "all":
@@ -188,6 +210,34 @@ async def index(request: Request, db: Session = Depends(get_db)):
         if last:
             last_checks[r.id] = last
     return _tr(request, "index.html", {"routes": routes, "last_checks": last_checks})
+
+
+@app.get("/tg/monitorings", response_class=HTMLResponse)
+async def telegram_monitorings(request: Request, token: str, db: Session = Depends(get_db)):
+    payload = _telegram_payload_or_403(token)
+    routes = _routes_for_telegram_payload(db, payload).order_by(TrackedRoute.created_at.desc()).all()
+    for r in routes:
+        _enrich_route(r)
+    last_checks: dict[int, PriceCheck] = {}
+    for r in routes:
+        last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == r.id).order_by(PriceCheck.checked_at.desc()).first()
+        if last:
+            last_checks[r.id] = last
+    return _tr(request, "tg_monitorings.html", {"routes": routes, "last_checks": last_checks, "token": token})
+
+
+@app.get("/tg/route/{route_id}", response_class=HTMLResponse)
+async def telegram_route_detail(request: Request, route_id: int, token: str, db: Session = Depends(get_db)):
+    payload = _telegram_payload_or_403(token)
+    token_route_id = payload.get("route_id")
+    if token_route_id is not None and int(token_route_id) != route_id:
+        raise HTTPException(status_code=404)
+    route = _routes_for_telegram_payload(db, payload).filter(TrackedRoute.id == route_id).first()
+    if not route:
+        raise HTTPException(status_code=404)
+    _enrich_route(route)
+    checks = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route_id).order_by(PriceCheck.checked_at.desc()).limit(50).all()
+    return _tr(request, "tg_route_detail.html", {"route": route, "checks": checks, "token": token})
 
 
 @app.get("/route/new", response_class=HTMLResponse)

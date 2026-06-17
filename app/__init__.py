@@ -28,7 +28,7 @@ def _install_admin_auth(app: FastAPI):
 
     @app.middleware("http")
     async def require_web_login(request: Request, call_next):
-        public_paths = ("/login", "/logout", "/healthz", "/static/")
+        public_paths = ("/login", "/logout", "/healthz", "/static/", "/tg/")
         if request.url.path.startswith(public_paths):
             return await call_next(request)
         if not auth_is_configured() or not get_session_user(request):
@@ -115,34 +115,6 @@ def _install_admin_auth(app: FastAPI):
         current_user = require_admin(request, db)
         users = db.query(WebUser).order_by(WebUser.username.asc()).all()
         return templates.TemplateResponse(request, "users.html", {"current_user": current_user, "users": users})
-
-    @app.post("/admin/users")
-    async def users_create(
-        request: Request,
-        username: str = Form(...),
-        password: str = Form(...),
-        display_name: str = Form(""),
-        telegram_username: str = Form(""),
-        is_admin: str | None = Form(None),
-        db=Depends(get_db),
-    ):
-        require_admin(request, db)
-        username = username.strip()
-        if not username or db.query(WebUser).filter(WebUser.username == username).first():
-            raise HTTPException(status_code=400, detail="User already exists or username is empty")
-        telegram_username = normalize_telegram_username(telegram_username)
-        db.add(
-            WebUser(
-                username=username,
-                password_hash=make_password_hash(password),
-                display_name=display_name.strip() or None,
-                telegram_username=telegram_username,
-                telegram_chat_id=find_telegram_chat_id(db, telegram_username),
-                is_admin=bool(is_admin),
-            )
-        )
-        db.commit()
-        return RedirectResponse("/admin/users", status_code=303)
 
     @app.post("/admin/users/{user_id}/toggle")
     async def users_toggle(request: Request, user_id: int, db=Depends(get_db)):
