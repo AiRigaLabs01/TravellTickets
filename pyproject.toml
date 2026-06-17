@@ -32,3 +32,6 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-p no:cacheprovider"
 norecursedirs = [".venv", ".tmp", "operator", "pytest-cache-files-*"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
