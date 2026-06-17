@@ -54,6 +54,7 @@
         </div>
         <div class="route-meta" style="gap:12px">
           <span>👤 {{ creator_label(route) }}</span>
+          <span>🔔 {{ notification_label(route) }}</span>
           <span>📅 туда {{ route.departure_date | fmt_route_date }}</span>
           {% if route.return_date %}<span>↩️ обратно {{ route.return_date | fmt_route_date }}</span>{% endif %}
           <span>💰 лимит {{ route.max_price | fmt_price }}</span>

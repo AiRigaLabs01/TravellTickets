@@ -2,8 +2,20 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.auth import auth_is_configured, create_session_cookie, find_telegram_chat_id, get_current_web_user, get_session_user, login_redirect, make_password_hash, normalize_telegram_username, require_admin, verify_password
-from app.auth import ADMIN_USERNAME, SESSION_COOKIE_NAME
+from app.auth import (
+    ADMIN_USERNAME,
+    SESSION_COOKIE_NAME,
+    auth_is_configured,
+    create_session_cookie,
+    find_telegram_chat_id,
+    get_current_web_user,
+    get_session_user,
+    login_redirect,
+    make_password_hash,
+    normalize_telegram_username,
+    require_admin,
+    verify_password,
+)
 from app.database import get_db
 from app.models import TrackedRoute, WebUser
 
@@ -23,9 +35,10 @@ def _install_admin_auth(app: FastAPI):
             return login_redirect(request)
         db = next(get_db())
         try:
-            request.state.current_user = get_current_web_user(request, db)
-            if not request.state.current_user:
+            current_user = get_current_web_user(request, db)
+            if not current_user or not current_user.is_admin:
                 return login_redirect(request)
+            request.state.current_user = current_user
         finally:
             db.close()
         return await call_next(request)
@@ -47,7 +60,7 @@ def _install_admin_auth(app: FastAPI):
         db=Depends(get_db),
     ):
         user = db.query(WebUser).filter(WebUser.username == username, WebUser.is_active == True).first()
-        if auth_is_configured() and user and verify_password(password, user.password_hash):
+        if auth_is_configured() and user and user.is_admin and verify_password(password, user.password_hash):
             response = RedirectResponse(next_url if next_url.startswith("/") else "/", status_code=303)
             response.set_cookie(
                 SESSION_COOKIE_NAME,
@@ -61,7 +74,7 @@ def _install_admin_auth(app: FastAPI):
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"next_url": next_url, "error": "Неверный логин или пароль"},
+            {"next_url": next_url, "error": "Неверный логин, пароль или нет прав администратора"},
             status_code=401,
         )
 
@@ -73,9 +86,7 @@ def _install_admin_auth(app: FastAPI):
 
     @app.get("/profile", response_class=HTMLResponse)
     async def profile_form(request: Request, db=Depends(get_db)):
-        user = get_current_web_user(request, db)
-        if not user:
-            return login_redirect(request)
+        user = require_admin(request, db)
         return templates.TemplateResponse(request, "profile.html", {"current_user": user})
 
     @app.post("/profile")
@@ -85,9 +96,7 @@ def _install_admin_auth(app: FastAPI):
         telegram_username: str = Form(""),
         db=Depends(get_db),
     ):
-        user = get_current_web_user(request, db)
-        if not user:
-            return login_redirect(request)
+        user = require_admin(request, db)
         user.display_name = display_name.strip() or None
         user.telegram_username = normalize_telegram_username(telegram_username)
         user.telegram_chat_id = find_telegram_chat_id(db, user.telegram_username) or user.telegram_chat_id
@@ -95,7 +104,6 @@ def _install_admin_auth(app: FastAPI):
             {
                 TrackedRoute.creator_display_name: user.display_name or user.username,
                 TrackedRoute.creator_username: user.telegram_username,
-                TrackedRoute.telegram_chat_id: user.telegram_chat_id,
             },
             synchronize_session=False,
         )

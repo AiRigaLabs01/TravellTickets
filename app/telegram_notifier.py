@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -50,6 +51,10 @@ def _append_yandex_link(lines: list[str], yandex_url: str | None):
         lines.append(f"🔗 <a href='{yandex_url}'>Проверить на Яндекс Путешествиях</a>")
 
 
+def _seller_line(flight: dict) -> str:
+    return f"🏷 Продавец: {flight.get('gate') or '—'}"
+
+
 def _leg_lines(title: str, leg: dict) -> list[str]:
     return [
         f"<b>{title}</b>",
@@ -57,6 +62,7 @@ def _leg_lines(title: str, leg: dict) -> list[str]:
         f"🏢 Аэропорт: {leg.get('origin_airport', leg.get('origin', '—'))} → {leg.get('destination_airport', leg.get('destination', '—'))}",
         f"🛫 Вылет: {_fmt_dt(leg.get('departure_at'))}",
         f"🛬 Прилёт: {_fmt_dt(leg.get('estimated_arrival_at'))}, рассчитано",
+        _seller_line(leg),
         f"💵 Цена плеча: {int(leg.get('price', 0)):,} ₽".replace(",", " "),
     ]
 
@@ -98,8 +104,7 @@ def build_notification_text(route: Any, flight: dict) -> str:
     if duration:
         lines.append(f"⏱ В пути: {_format_duration(duration)}")
     lines.append(f"🔀 Пересадки: {transfers_str}")
-    if flight.get("gate"):
-        lines.append(f"🏪 Продавец: {flight['gate']}")
+    lines.append(_seller_line(flight))
 
     _append_yandex_link(lines, flight.get("yandex_travel_url"))
     lines.append("\n<i>⚠️ Цены из кэша Aviasales — уточняйте актуальную цену у продавца перед покупкой.</i>")
@@ -129,6 +134,7 @@ def _best_flight_lines(route: Any, flight: dict) -> list[str]:
             f"✈️ Рейс: {flight.get('airline', '—')} {flight.get('flight_number', '')}",
             f"🕓 Вылет: {_fmt_dt(flight.get('departure_at'))}",
             f"🕕 Прилёт: {_fmt_dt(flight.get('estimated_arrival_at'))}, рассчитано",
+            _seller_line(flight),
         ])
     return lines
 
@@ -190,17 +196,20 @@ async def send_telegram_notification(chat_id: str, text: str) -> bool:
     if not chat_id:
         logger.warning("No chat_id provided, skipping notification")
         return False
-    try:
-        import httpx
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": False}
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(url, json=payload)
+    import httpx
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": False}
+    for attempt in range(1, 4):
+        try:
+            async with httpx.AsyncClient(timeout=45) as client:
+                resp = await client.post(url, json=payload)
             if resp.status_code == 200:
                 logger.info(f"Telegram notification sent to {chat_id}")
                 return True
             logger.error(f"Telegram API error {resp.status_code}: {resp.text[:200]}")
             return False
-    except Exception as e:
-        logger.error(f"Failed to send Telegram notification: {e}")
-        return False
+        except Exception as e:
+            logger.warning(f"Failed to send Telegram notification attempt {attempt}: {e}")
+            if attempt < 3:
+                await asyncio.sleep(2 * attempt)
+    return False

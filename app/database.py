@@ -43,6 +43,8 @@ def _ensure_tracked_route_columns():
         "creator_display_name": "VARCHAR",
         "creator_username": "VARCHAR",
         "creator_telegram_user_id": "VARCHAR",
+        "notification_mode": "VARCHAR DEFAULT 'telegram'",
+        "notification_username": "VARCHAR",
         "web_user_id": "INTEGER",
         "trip_type": "VARCHAR DEFAULT 'oneway'",
         "adult_seats": "INTEGER DEFAULT 1",

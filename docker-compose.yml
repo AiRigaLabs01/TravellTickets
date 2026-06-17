@@ -5,8 +5,8 @@ services:
     user: "0:0"
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
     volumes:
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - ./haproxy/certs:/usr/local/etc/haproxy/certs:ro
@@ -23,6 +23,11 @@ services:
       - .env
     expose:
       - "5000"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    extra_hosts:
+      - "api.telegram.org:149.154.166.110"
     depends_on:
       - db
     security_opt:

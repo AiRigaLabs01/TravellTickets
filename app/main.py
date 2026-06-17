@@ -16,8 +16,8 @@ from app.config import TELEGRAM_BOT_TOKEN
 from app.database import SessionLocal, get_db, init_db
 from app.date_utils import format_msk_datetime, format_msk_time, format_route_date, parse_route_date
 from app.locations import search_locations
-from app.models import Notification, PriceCheck, TrackedRoute
-from app.auth import find_telegram_chat_id, get_current_web_user
+from app.models import Notification, PriceCheck, TrackedRoute, WebUser
+from app.auth import find_telegram_chat_id, get_current_web_user, normalize_telegram_username
 from app.scheduler import check_route, load_all_routes, schedule_route, scheduler, unschedule_route
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -139,8 +139,40 @@ def _routes_for_user(db: Session, user):
     return query
 
 
+def _notification_label(route):
+    mode = getattr(route, "notification_mode", None) or "telegram"
+    if mode == "all":
+        return "всем"
+    username = getattr(route, "notification_username", None) or getattr(route, "creator_username", None)
+    if username:
+        return f"@{username}"
+    return "не назначено"
+
+
+_jinja_env.globals["notification_label"] = _notification_label
+
+
 def _route_form_context(route=None, errors=None, origin_display="", dest_display=""):
     return {"route": route, "errors": errors or [], "origin_display": origin_display, "dest_display": dest_display, "today": date.today().isoformat()}
+
+
+def _resolve_route_notification(db: Session, user, mode: str, username: str | None, errors: list[str]) -> tuple[str, str | None, str | None]:
+    notification_mode = "all" if mode == "all" else "telegram"
+    notification_username = normalize_telegram_username(username)
+    chat_id = None
+    if notification_mode == "all":
+        return notification_mode, None, None
+    if not notification_username and user:
+        notification_username = normalize_telegram_username(user.telegram_username)
+        chat_id = user.telegram_chat_id
+    if not notification_username:
+        errors.append("Укажите Telegram username для уведомлений или выберите отправку всем")
+        return notification_mode, None, None
+    chat_id = chat_id or find_telegram_chat_id(db, notification_username)
+    if not chat_id:
+        known = db.query(WebUser).filter(WebUser.telegram_username == notification_username, WebUser.telegram_chat_id.isnot(None)).first()
+        chat_id = known.telegram_chat_id if known else None
+    return notification_mode, notification_username, chat_id
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -189,6 +221,8 @@ async def route_create(
     return_departure_time_to: Optional[str] = Form(None),
     return_arrival_time_from: Optional[str] = Form(None),
     return_arrival_time_to: Optional[str] = Form(None),
+    notification_mode: str = Form("telegram"),
+    notification_username: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     o, d = resolve_iata(origin), resolve_iata(destination)
@@ -199,15 +233,11 @@ async def route_create(
     if len(d) != 3: errors.append("Не удалось определить город/аэропорт назначения")
     if not iso_date: errors.append("Неверная дата вылета")
     if trip_type == "roundtrip" and not return_iso: errors.append("Для перелёта туда-обратно нужна дата возвращения")
+    user = get_current_web_user(request, db)
+    notification_mode, notification_username, telegram_chat_id = _resolve_route_notification(db, user, notification_mode, notification_username, errors)
     if errors:
         return _tr(request, "route_form.html", _route_form_context(errors=errors, origin_display=origin, dest_display=destination))
-    user = get_current_web_user(request, db)
     display_name = (user.display_name or user.username) if user else "Веб-интерфейс"
-    telegram_chat_id = user.telegram_chat_id if user else None
-    if user and not telegram_chat_id:
-        telegram_chat_id = find_telegram_chat_id(db, user.telegram_username)
-        if telegram_chat_id:
-            user.telegram_chat_id = telegram_chat_id
     route = TrackedRoute(
         origin=o,
         destination=d,
@@ -235,9 +265,11 @@ async def route_create(
         title=f"{city_label(o)} → {city_label(d)} {format_route_date(iso_date)}",
         creator_source="web",
         telegram_chat_id=telegram_chat_id,
+        notification_mode=notification_mode,
+        notification_username=notification_username,
         web_user_id=user.id if user else None,
         creator_display_name=display_name,
-        creator_username=user.telegram_username if user else None,
+        creator_username=notification_username,
     )
     db.add(route)
     db.commit()
@@ -283,6 +315,8 @@ async def route_edit(
     return_departure_time_to: Optional[str] = Form(None),
     return_arrival_time_from: Optional[str] = Form(None),
     return_arrival_time_to: Optional[str] = Form(None),
+    notification_mode: str = Form("telegram"),
+    notification_username: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     user = get_current_web_user(request, db)
@@ -292,6 +326,14 @@ async def route_edit(
     o, d = resolve_iata(origin), resolve_iata(destination)
     iso_date = parse_route_date(departure_date)
     return_iso = parse_route_date(return_date) if trip_type == "roundtrip" and return_date else None
+    errors = []
+    if len(o) != 3: errors.append("Не удалось определить город/аэропорт вылета")
+    if len(d) != 3: errors.append("Не удалось определить город/аэропорт назначения")
+    if not iso_date: errors.append("Неверная дата вылета")
+    if trip_type == "roundtrip" and not return_iso: errors.append("Для перелёта туда-обратно нужна дата возвращения")
+    notification_mode, notification_username, telegram_chat_id = _resolve_route_notification(db, user, notification_mode, notification_username, errors)
+    if errors:
+        return _tr(request, "route_form.html", _route_form_context(route=route, errors=errors, origin_display=origin, dest_display=destination))
     changed_core = (o != route.origin or d != route.destination or iso_date != route.departure_date)
     route.origin, route.destination, route.departure_date = o, d, iso_date
     route.return_date = return_iso
@@ -314,6 +356,10 @@ async def route_edit(
     route.return_departure_time_to = return_departure_time_to or None
     route.return_arrival_time_from = return_arrival_time_from or None
     route.return_arrival_time_to = return_arrival_time_to or None
+    route.notification_mode = notification_mode
+    route.notification_username = notification_username
+    route.telegram_chat_id = telegram_chat_id
+    route.creator_username = notification_username
     route.title = f"{city_label(o)} → {city_label(d)} {format_route_date(iso_date)}"
     if changed_core:
         _reset_route_results(db, route)

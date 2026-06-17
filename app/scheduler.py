@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import DEBUG_MONITORING_MESSAGES, TELEGRAM_CHAT_ID
 from app.database import SessionLocal
 from app.flight_filters import apply_filters
-from app.models import Notification, PriceCheck, TrackedRoute
+from app.models import Notification, PriceCheck, TrackedRoute, WebUser
 from app.telegram_notifier import (
     build_debug_monitoring_text,
     build_no_changes_text,
@@ -25,12 +25,49 @@ scheduler = AsyncIOScheduler()
 NO_CHANGE_NOTIFY_EVERY = 3
 
 
-def _notification_chat_id(route: TrackedRoute) -> str | None:
-    if route.telegram_chat_id:
-        return route.telegram_chat_id
-    if getattr(route, "web_user_id", None):
+def _find_chat_id_by_username(db: Session, username: str | None) -> str | None:
+    username = (username or "").strip().lstrip("@")
+    if not username:
         return None
-    return TELEGRAM_CHAT_ID
+    user = db.query(WebUser).filter(WebUser.telegram_username == username, WebUser.telegram_chat_id.isnot(None)).first()
+    if user:
+        return user.telegram_chat_id
+    route = (
+        db.query(TrackedRoute)
+        .filter(TrackedRoute.creator_username == username, TrackedRoute.telegram_chat_id.isnot(None))
+        .order_by(TrackedRoute.created_at.desc())
+        .first()
+    )
+    return route.telegram_chat_id if route else None
+
+
+def _notification_chat_ids(route: TrackedRoute, db: Session) -> list[str]:
+    mode = (getattr(route, "notification_mode", None) or "telegram").lower()
+    if mode == "all":
+        ids = set()
+        for value in db.query(WebUser.telegram_chat_id).filter(WebUser.telegram_chat_id.isnot(None)).all():
+            ids.add(value[0])
+        for value in db.query(TrackedRoute.telegram_chat_id).filter(TrackedRoute.telegram_chat_id.isnot(None)).all():
+            ids.add(value[0])
+        return sorted(ids)
+    if getattr(route, "notification_username", None):
+        chat_id = _find_chat_id_by_username(db, route.notification_username)
+        if chat_id:
+            route.telegram_chat_id = chat_id
+            return [chat_id]
+    if route.telegram_chat_id:
+        return [route.telegram_chat_id]
+    if getattr(route, "web_user_id", None):
+        return []
+    return [TELEGRAM_CHAT_ID] if TELEGRAM_CHAT_ID else []
+
+
+async def _send_to_route_recipients(route: TrackedRoute, db: Session, text: str) -> bool:
+    sent_any = False
+    for chat_id in _notification_chat_ids(route, db):
+        if await send_telegram_notification(chat_id, text):
+            sent_any = True
+    return sent_any
 
 
 def _should_notify(route: TrackedRoute, flight: dict, db: Session) -> bool:
@@ -129,22 +166,18 @@ def _best_roundtrip(outbound: list[dict], inbound: list[dict], yandex_url: str) 
     return best
 
 
-async def _send_debug_message(route: TrackedRoute, flights_count: int, filtered_count: int, best_flight: dict | None, error: str | None = None):
+async def _send_debug_message(route: TrackedRoute, db: Session, flights_count: int, filtered_count: int, best_flight: dict | None, error: str | None = None):
     if not DEBUG_MONITORING_MESSAGES:
         return
-    chat_id = _notification_chat_id(route)
-    if not chat_id:
+    if not _notification_chat_ids(route, db):
         return
     text = build_debug_monitoring_text(route, flights_count, filtered_count, best_flight, error)
-    await send_telegram_notification(chat_id, text)
+    await _send_to_route_recipients(route, db, text)
 
 
-async def _send_no_changes_message(route: TrackedRoute, flights_count: int, filtered_count: int, best_flight: dict | None):
-    chat_id = _notification_chat_id(route)
-    if not chat_id:
-        return False
+async def _send_no_changes_message(route: TrackedRoute, db: Session, flights_count: int, filtered_count: int, best_flight: dict | None):
     text = build_no_changes_text(route, flights_count, filtered_count, best_flight)
-    return await send_telegram_notification(chat_id, text)
+    return await _send_to_route_recipients(route, db, text)
 
 
 async def _check_roundtrip(route: TrackedRoute, db: Session):
@@ -168,14 +201,12 @@ async def _check_roundtrip(route: TrackedRoute, db: Session):
         db.add(price_check)
         db.flush()
         if matches and _should_notify(route, best, db):
-            chat_id = _notification_chat_id(route)
-            if chat_id:
-                text = build_notification_text(route, best)
-                sent = await send_telegram_notification(chat_id, text)
-                if sent:
-                    notification_sent = True
-                    route.no_change_checks_count = 0
-                    db.add(Notification(tracked_route_id=route.id, price_check_id=price_check.id, channel="telegram", message=text))
+            text = build_notification_text(route, best)
+            sent = await _send_to_route_recipients(route, db, text)
+            if sent:
+                notification_sent = True
+                route.no_change_checks_count = 0
+                db.add(Notification(tracked_route_id=route.id, price_check_id=price_check.id, channel="telegram", message=text))
         if matches and (route.last_best_price is None or best["price"] < route.last_best_price):
             route.last_best_price = best["price"]
 
@@ -202,14 +233,12 @@ async def _check_oneway(route: TrackedRoute, db: Session):
         db.add(price_check)
         db.flush()
         if _should_notify(route, flight, db):
-            chat_id = _notification_chat_id(route)
-            if chat_id:
-                text = build_notification_text(route, flight)
-                sent = await send_telegram_notification(chat_id, text)
-                if sent:
-                    notification_sent = True
-                    route.no_change_checks_count = 0
-                    db.add(Notification(tracked_route_id=route.id, price_check_id=price_check.id, channel="telegram", message=text))
+            text = build_notification_text(route, flight)
+            sent = await _send_to_route_recipients(route, db, text)
+            if sent:
+                notification_sent = True
+                route.no_change_checks_count = 0
+                db.add(Notification(tracked_route_id=route.id, price_check_id=price_check.id, channel="telegram", message=text))
         if route.last_best_price is None or flight["price"] < route.last_best_price:
             route.last_best_price = flight["price"]
 
@@ -238,7 +267,7 @@ async def check_route(route_id: int):
             route.last_error = error_msg
             route.last_checked_at = datetime.utcnow()
             db.commit()
-            await _send_debug_message(route, 0, 0, None, error_msg)
+            await _send_debug_message(route, db, 0, 0, None, error_msg)
             return
 
         route.last_error = None
@@ -250,11 +279,11 @@ async def check_route(route_id: int):
         db.commit()
 
         if not notification_sent and (route.no_change_checks_count or 0) >= NO_CHANGE_NOTIFY_EVERY:
-            sent = await _send_no_changes_message(route, flights_count, filtered_count, status_flight)
+            sent = await _send_no_changes_message(route, db, flights_count, filtered_count, status_flight)
             if sent:
                 route.no_change_checks_count = 0
                 db.commit()
-        await _send_debug_message(route, flights_count, filtered_count, status_flight)
+        await _send_debug_message(route, db, flights_count, filtered_count, status_flight)
     except Exception as e:
         logger.exception(f"Unexpected error checking route #{route_id}: {e}")
         try:

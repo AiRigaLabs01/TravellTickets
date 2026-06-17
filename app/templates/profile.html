@@ -9,14 +9,14 @@
 <body>
 <nav class="navbar">
   <a class="brand" href="/">✈️ TravellTickets</a>
-  <span class="subtitle">Профиль</span>
+  <span class="subtitle">Профиль администратора</span>
   <span class="nav-spacer"></span>
   <a class="nav-link" href="/">Мониторинги</a>
-  {% if current_user and current_user.is_admin %}<a class="nav-link" href="/admin/users">Пользователи</a>{% endif %}
+  <a class="nav-link" href="/admin/users">Пользователи</a>
   <a class="nav-link" href="/logout">Выйти</a>
 </nav>
 <div class="container-narrow">
-  <div class="page-header"><h1>Профиль</h1></div>
+  <div class="page-header"><h1>Профиль администратора</h1></div>
   <form class="form-block" method="post" action="/profile">
     <div class="form-grid">
       <div class="form-group">
@@ -27,12 +27,12 @@
         <label>Имя</label>
         <input type="text" name="display_name" value="{{ current_user.display_name or '' }}" placeholder="Как показывать в маршрутах">
       </div>
+      <div class="form-group">
+        <label>Telegram username</label>
+        <input type="text" name="telegram_username" value="{{ current_user.telegram_username or '' }}" placeholder="username без @">
+      </div>
     </div>
-    <div class="form-group" style="margin-top:14px">
-      <label>Telegram username</label>
-      <input type="text" name="telegram_username" value="{{ current_user.telegram_username or '' }}" placeholder="username без @">
-      <span class="hint">Уведомления смогут приходить в личку после того, как Telegram-бот узнает ваш chat_id. Если вы уже создавали мониторинг через бота с этим ником, связь подтянется автоматически.</span>
-    </div>
+    <div class="alert alert-info" style="margin-top:14px">Telegram-уведомления можно отправлять на ник, если бот уже знает chat_id этого ника. Надёжнее всего сначала открыть бота и нажать Start.</div>
     <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn btn-primary" type="submit">💾 Сохранить</button>
       <a class="btn btn-ghost" href="/">Отмена</a>

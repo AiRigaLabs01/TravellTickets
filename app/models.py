@@ -10,6 +10,8 @@ class TrackedRoute(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=True)
     telegram_chat_id = Column(String, nullable=True)
+    notification_mode = Column(String, default="telegram")
+    notification_username = Column(String, nullable=True)
     web_user_id = Column(Integer, ForeignKey("web_users.id"), nullable=True)
     creator_source = Column(String, default="web")
     creator_display_name = Column(String, nullable=True)

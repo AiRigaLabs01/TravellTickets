@@ -35,6 +35,7 @@
 
   <div class="stats-strip">
     <div class="stat-item"><div class="stat-label">Автор</div><div style="font-weight:700">{{ creator_label(route) }}</div></div>
+    <div class="stat-item"><div class="stat-label">Уведомления</div><div style="font-weight:700">{{ notification_label(route) }}</div></div>
     <div class="stat-item"><div class="stat-label">Статус</div>{% if route.is_active %}<span class="badge badge-active">активен</span>{% else %}<span class="badge badge-inactive">остановлен</span>{% endif %}</div>
     <div class="stat-item"><div class="stat-label">Максимальная цена</div><div style="font-weight:700">{{ route.max_price | fmt_price }}</div></div>
     <div class="stat-item"><div class="stat-label">Лучшая подходящая</div>{% if checks and route.last_best_price %}<div class="price-big" style="font-size:20px">{{ route.last_best_price | fmt_price }}</div>{% elif route.last_checked_at %}<div class="price-na">подходящих билетов нет</div>{% else %}<div class="price-na">нет данных</div>{% endif %}</div>
