@@ -12,6 +12,7 @@ RUN printf 'precedence ::ffff:0:0/96  100\n' >> /etc/gai.conf
 
 COPY pyproject.toml ./
 COPY app ./app
+COPY data ./data
 
 RUN pip install --upgrade pip
 RUN pip install .

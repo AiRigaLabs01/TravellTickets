@@ -10,11 +10,14 @@ def resolve_location_code(value: str | None) -> str | None:
     raw = (value or "").strip()
     if not raw:
         return None
-    for item in search_locations(raw, limit=20):
+    matches = search_locations(raw, limit=20)
+    for item in matches:
         label = item["label"]
         code = item["value"].upper()
         if raw == label or raw.upper() == code:
             return code
+    if len(matches) == 1:
+        return matches[0]["value"].upper()
     match = IATA_RE.search(raw)
     if match:
         code = resolve_iata(match.group(1))
