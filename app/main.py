@@ -11,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.orm import Session
 
-from app.city_codes import airline_label, airport_label, city_label, resolve_iata
+from app.city_codes import airline_label, airport_label, city_label
 from app.config import TELEGRAM_BOT_TOKEN
 from app.database import get_db, init_db
 from app.date_utils import format_msk_datetime, format_msk_time, format_route_date, parse_route_date
@@ -20,6 +20,7 @@ from app.models import Notification, PriceCheck, TrackedRoute, WebUser
 from app.auth import find_telegram_chat_id, get_current_web_user, normalize_telegram_username, verify_telegram_access_token
 from app.repositories import RouteRepository
 from app.scheduler import check_route, load_all_routes, schedule_route, scheduler, unschedule_route
+from app.services.locations import resolve_route_location
 from app.services.routes import delete_route as delete_route_service
 from app.services.routes import passenger_count, reset_route_results
 from app.web_admin import install_web_admin
@@ -128,6 +129,13 @@ def _reset_route_results(db: Session, route: TrackedRoute):
 
 def _passenger_count(value: int | None, default: int = 0, min_value: int = 0, max_value: int = 9) -> int:
     return passenger_count(value, default, min_value, max_value)
+
+
+def _airport_filter(selected_airport: str | None, submitted_airports: str | None) -> str | None:
+    selected = (selected_airport or "").upper().strip()
+    if selected:
+        return selected
+    return (submitted_airports or "").upper().strip() or None
 
 
 def _routes_for_user(db: Session, user):
@@ -266,12 +274,15 @@ async def route_create(
     notification_username: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
-    o, d = resolve_iata(origin), resolve_iata(destination)
+    origin_location = resolve_route_location(origin)
+    destination_location = resolve_route_location(destination)
+    o = origin_location.code if origin_location else None
+    d = destination_location.code if destination_location else None
     iso_date = parse_route_date(departure_date)
     return_iso = parse_route_date(return_date) if trip_type == "roundtrip" and return_date else None
     errors = []
-    if len(o) != 3: errors.append("Не удалось определить город/аэропорт вылета")
-    if len(d) != 3: errors.append("Не удалось определить город/аэропорт назначения")
+    if not o: errors.append("Не удалось определить город/аэропорт вылета")
+    if not d: errors.append("Не удалось определить город/аэропорт назначения")
     if not iso_date: errors.append("Неверная дата вылета")
     if trip_type == "roundtrip" and not return_iso: errors.append("Для перелёта туда-обратно нужна дата возвращения")
     user = get_current_web_user(request, db)
@@ -293,8 +304,8 @@ async def route_create(
         interval_minutes=interval_minutes,
         direct_only=bool(direct_only),
         airline_codes=(airline_codes or "").upper().strip() or None,
-        origin_airports=(origin_airports or "").upper().strip() or None,
-        destination_airports=(destination_airports or "").upper().strip() or None,
+        origin_airports=_airport_filter(origin_location.airport_code if origin_location else None, origin_airports),
+        destination_airports=_airport_filter(destination_location.airport_code if destination_location else None, destination_airports),
         departure_time_from=departure_time_from or None,
         departure_time_to=departure_time_to or None,
         arrival_time_from=arrival_time_from or None,
@@ -364,12 +375,15 @@ async def route_edit(
     route = _routes_for_user(db, user).filter(TrackedRoute.id == route_id).first()
     if not route:
         raise HTTPException(status_code=404)
-    o, d = resolve_iata(origin), resolve_iata(destination)
+    origin_location = resolve_route_location(origin)
+    destination_location = resolve_route_location(destination)
+    o = origin_location.code if origin_location else None
+    d = destination_location.code if destination_location else None
     iso_date = parse_route_date(departure_date)
     return_iso = parse_route_date(return_date) if trip_type == "roundtrip" and return_date else None
     errors = []
-    if len(o) != 3: errors.append("Не удалось определить город/аэропорт вылета")
-    if len(d) != 3: errors.append("Не удалось определить город/аэропорт назначения")
+    if not o: errors.append("Не удалось определить город/аэропорт вылета")
+    if not d: errors.append("Не удалось определить город/аэропорт назначения")
     if not iso_date: errors.append("Неверная дата вылета")
     if trip_type == "roundtrip" and not return_iso: errors.append("Для перелёта туда-обратно нужна дата возвращения")
     notification_mode, notification_username, telegram_chat_id = _resolve_route_notification(db, user, notification_mode, notification_username, errors)
@@ -387,8 +401,8 @@ async def route_edit(
     route.interval_minutes = interval_minutes
     route.direct_only = bool(direct_only)
     route.airline_codes = (airline_codes or "").upper().strip() or None
-    route.origin_airports = (origin_airports or "").upper().strip() or None
-    route.destination_airports = (destination_airports or "").upper().strip() or None
+    route.origin_airports = _airport_filter(origin_location.airport_code if origin_location else None, origin_airports)
+    route.destination_airports = _airport_filter(destination_location.airport_code if destination_location else None, destination_airports)
     route.departure_time_from = departure_time_from or None
     route.departure_time_to = departure_time_to or None
     route.arrival_time_from = arrival_time_from or None

@@ -7,13 +7,15 @@ from app.city_codes import city_label
 from app.date_utils import format_route_date, parse_route_date
 from app.models import Notification, PriceCheck, TrackedRoute, WebUser
 from app.schemas import RouteFormData
-from app.services.locations import resolve_location_code
+from app.services.locations import resolve_route_location
 
 
 @dataclass(frozen=True)
 class RouteValidationResult:
     origin: str | None
     destination: str | None
+    origin_airport: str | None
+    destination_airport: str | None
     departure_date: str | None
     return_date: str | None
     errors: list[str]
@@ -74,8 +76,10 @@ def resolve_route_notification(
 
 
 def validate_route_form(data: RouteFormData) -> RouteValidationResult:
-    origin = resolve_location_code(data.origin)
-    destination = resolve_location_code(data.destination)
+    origin_location = resolve_route_location(data.origin)
+    destination_location = resolve_route_location(data.destination)
+    origin = origin_location.code if origin_location else None
+    destination = destination_location.code if destination_location else None
     departure = parse_route_date(data.departure_date)
     return_date = parse_route_date(data.return_date) if data.trip_type == "roundtrip" and data.return_date else None
     errors: list[str] = []
@@ -87,7 +91,22 @@ def validate_route_form(data: RouteFormData) -> RouteValidationResult:
         errors.append("Неверная дата вылета")
     if data.trip_type == "roundtrip" and not return_date:
         errors.append("Для перелёта туда-обратно нужна дата возвращения")
-    return RouteValidationResult(origin, destination, departure, return_date, errors)
+    return RouteValidationResult(
+        origin,
+        destination,
+        origin_location.airport_code if origin_location else None,
+        destination_location.airport_code if destination_location else None,
+        departure,
+        return_date,
+        errors,
+    )
+
+
+def _airport_filter(selected_airport: str | None, submitted_airports: str | None) -> str | None:
+    selected = (selected_airport or "").upper().strip()
+    if selected:
+        return selected
+    return (submitted_airports or "").upper().strip() or None
 
 
 def apply_route_form(
@@ -116,8 +135,8 @@ def apply_route_form(
     route.interval_minutes = data.interval_minutes
     route.direct_only = data.direct_only
     route.airline_codes = (data.airline_codes or "").upper().strip() or None
-    route.origin_airports = (data.origin_airports or "").upper().strip() or None
-    route.destination_airports = (data.destination_airports or "").upper().strip() or None
+    route.origin_airports = _airport_filter(validated.origin_airport, data.origin_airports)
+    route.destination_airports = _airport_filter(validated.destination_airport, data.destination_airports)
     route.departure_time_from = data.departure_time_from or None
     route.departure_time_to = data.departure_time_to or None
     route.arrival_time_from = data.arrival_time_from or None

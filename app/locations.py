@@ -122,5 +122,33 @@ def search_locations(query: str, limit: int = 10) -> list[dict[str, str]]:
     ]
 
 
+def get_location(value: str | None) -> Location | None:
+    code = (value or "").strip().upper()
+    if not code:
+        return None
+    for location in get_locations():
+        if location.value.upper() == code:
+            return location
+    return None
+
+
+def route_code_for_airport(airport_code: str | None) -> str | None:
+    code = (airport_code or "").strip().upper()
+    if not code:
+        return None
+    for group_code, group in _read_city_groups().items():
+        airports = [airport.upper() for airport in group.get("airports", []) if isinstance(airport, str)]
+        if code in airports:
+            return group_code.upper()
+    return code
+
+
+def city_name_for_code(code: str | None) -> str | None:
+    location = get_location(code)
+    if not location:
+        return None
+    return location.city or location.label
+
+
 POPULAR_ORIGINS = _popular(POPULAR_ORIGIN_CODES)
 POPULAR_DESTINATIONS = _popular(POPULAR_DESTINATION_CODES)

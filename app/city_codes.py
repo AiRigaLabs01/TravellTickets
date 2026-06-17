@@ -118,7 +118,16 @@ def resolve_iata(value: str) -> str:
 
 def city_label(iata: str) -> str:
     """Return a human-readable label for an IATA code."""
-    return IATA_TO_CITY.get(iata.upper(), iata.upper())
+    code = iata.upper()
+    try:
+        from app.locations import city_name_for_code
+
+        label = city_name_for_code(code)
+        if label:
+            return label
+    except (ImportError, OSError):
+        pass
+    return IATA_TO_CITY.get(code, code)
 
 
 def airline_label(code: str) -> str:
@@ -126,4 +135,13 @@ def airline_label(code: str) -> str:
 
 
 def airport_label(code: str) -> str:
-    return AIRPORT_NAMES.get(code.strip().upper(), code.strip().upper())
+    airport_code = code.strip().upper()
+    try:
+        from app.locations import get_location
+
+        location = get_location(airport_code)
+        if location:
+            return location.label
+    except (ImportError, OSError):
+        pass
+    return AIRPORT_NAMES.get(airport_code, airport_code)

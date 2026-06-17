@@ -18,7 +18,7 @@ from app.auth import create_telegram_access_token, normalize_telegram_username
 from app.models import Notification, PriceCheck, TrackedRoute
 from app.scheduler import check_route, schedule_route, unschedule_route
 from app.services.locations import location_choices as service_location_choices
-from app.services.locations import resolve_location_code, should_offer_location_choices as service_should_offer_location_choices
+from app.services.locations import resolve_location_code, resolve_route_location, should_offer_location_choices as service_should_offer_location_choices
 from app.services.routes import delete_route as delete_route_service
 from app.yandex_links import build_yandex_travel_url_for_route
 
@@ -138,6 +138,10 @@ def resolve_location(text: str) -> str | None:
     return resolve_location_code(text)
 
 
+def resolve_route_choice(text: str):
+    return resolve_route_location(text)
+
+
 def should_offer_location_choices(text: str) -> bool:
     return service_should_offer_location_choices(text)
 
@@ -188,6 +192,8 @@ def route_card(route: TrackedRoute, last: PriceCheck | None = None) -> str:
         filters.append("только прямые")
     if route.destination_airports:
         filters.append(f"аэропорты: {route.destination_airports}")
+    if route.origin_airports:
+        filters.append(f"аэропорты вылета: {route.origin_airports}")
     if route.airline_codes:
         filters.append(f"авиакомпании: {route.airline_codes}")
     if route.baggage_required:
@@ -317,26 +323,26 @@ def register_handlers(dp: Dispatcher):
         if should_offer_location_choices(message.text):
             await message.answer("Выберите город или конкретный аэропорт из справочника:", reply_markup=location_keyboard(message.text))
             return
-        code = resolve_location(message.text)
-        if not code:
+        selected = resolve_route_choice(message.text)
+        if not selected:
             await message.answer("Не понял город вылета. Выберите вариант из справочника или введите IATA-код.", parse_mode="HTML", reply_markup=location_keyboard(message.text))
             return
-        await state.update_data(origin=code)
+        await state.update_data(origin=selected.code, origin_airports=selected.airport_code)
         await state.set_state(NewRouteStates.destination)
-        await message.answer(f"Выбрано: <b>{city_label(code)} / {code}</b>\n\nВведите город или код назначения. Например: <b>Москва</b>, <b>Моск</b> или <b>MOW</b>", parse_mode="HTML")
+        await message.answer(f"Выбрано: <b>{city_label(selected.code)} / {selected.code}</b>\n\nВведите город или код назначения. Например: <b>Москва</b>, <b>Моск</b> или <b>MOW</b>", parse_mode="HTML")
 
     @dp.message(NewRouteStates.destination)
     async def new_destination(message: Message, state: FSMContext):
         if should_offer_location_choices(message.text):
             await message.answer("Выберите город или конкретный аэропорт из справочника:", reply_markup=location_keyboard(message.text))
             return
-        code = resolve_location(message.text)
-        if not code:
+        selected = resolve_route_choice(message.text)
+        if not selected:
             await message.answer("Не понял город назначения. Выберите вариант из справочника или введите IATA-код.", parse_mode="HTML", reply_markup=location_keyboard(message.text))
             return
-        await state.update_data(destination=code)
+        await state.update_data(destination=selected.code, destination_airports=selected.airport_code)
         await state.set_state(NewRouteStates.trip_type)
-        await message.answer(f"Выбрано: <b>{city_label(code)} / {code}</b>\n\nВыберите тип перелёта:", parse_mode="HTML", reply_markup=kb([["Только туда", "Туда-обратно"]]))
+        await message.answer(f"Выбрано: <b>{city_label(selected.code)} / {selected.code}</b>\n\nВыберите тип перелёта:", parse_mode="HTML", reply_markup=kb([["Только туда", "Туда-обратно"]]))
 
     @dp.message(NewRouteStates.trip_type)
     async def new_trip_type(message: Message, state: FSMContext):
@@ -415,7 +421,7 @@ def register_handlers(dp: Dispatcher):
         await message.answer("⏳ <b>Мониторинг создан. Проверяю текущие цены...</b>", parse_mode="HTML", reply_markup=main_menu())
         db = SessionLocal()
         try:
-            r = TrackedRoute(origin=data["origin"], destination=data["destination"], departure_date=data["departure_date"], return_date=data.get("return_date"), trip_type=data.get("trip_type", "oneway"), adult_seats=data.get("adult_seats", 1), children_seats=data.get("children_seats", 0), infant_seats=data.get("infant_seats", 0), baggage_required=data.get("baggage_required", False), max_price=data["max_price"], interval_minutes=data["interval_minutes"], direct_only=direct, telegram_chat_id=chat_id(message), creator_source="telegram", creator_display_name=creator_name(message), creator_username=creator_username(message), creator_telegram_user_id=creator_user_id(message), title=f"{city_label(data['origin'])} → {city_label(data['destination'])} {format_route_date(data['departure_date'])}")
+            r = TrackedRoute(origin=data["origin"], destination=data["destination"], origin_airports=data.get("origin_airports"), destination_airports=data.get("destination_airports"), departure_date=data["departure_date"], return_date=data.get("return_date"), trip_type=data.get("trip_type", "oneway"), adult_seats=data.get("adult_seats", 1), children_seats=data.get("children_seats", 0), infant_seats=data.get("infant_seats", 0), baggage_required=data.get("baggage_required", False), max_price=data["max_price"], interval_minutes=data["interval_minutes"], direct_only=direct, telegram_chat_id=chat_id(message), creator_source="telegram", creator_display_name=creator_name(message), creator_username=creator_username(message), creator_telegram_user_id=creator_user_id(message), title=f"{city_label(data['origin'])} → {city_label(data['destination'])} {format_route_date(data['departure_date'])}")
             db.add(r); db.commit(); db.refresh(r); route_id = r.id; schedule_route(r)
         finally:
             db.close()
@@ -459,11 +465,11 @@ def register_handlers(dp: Dispatcher):
         if should_offer_location_choices(message.text):
             await message.answer("Выберите город или конкретный аэропорт из справочника:", reply_markup=location_keyboard(message.text))
             return
-        code = resolve_location(message.text)
-        if not code:
+        selected = resolve_route_choice(message.text)
+        if not selected:
             await message.answer("Не понял город вылета. Выберите вариант из справочника или введите IATA-код.", reply_markup=location_keyboard(message.text))
             return
-        data = await state.get_data(); await state.clear(); await update_route(message, data["edit_route_id"], reset=True, origin=code)
+        data = await state.get_data(); await state.clear(); await update_route(message, data["edit_route_id"], reset=True, origin=selected.code, origin_airports=selected.airport_code)
 
     @dp.callback_query(F.data.startswith("edit_destination:"))
     async def cb_edit_destination(callback, state: FSMContext):
@@ -474,11 +480,11 @@ def register_handlers(dp: Dispatcher):
         if should_offer_location_choices(message.text):
             await message.answer("Выберите город или конкретный аэропорт из справочника:", reply_markup=location_keyboard(message.text))
             return
-        code = resolve_location(message.text)
-        if not code:
+        selected = resolve_route_choice(message.text)
+        if not selected:
             await message.answer("Не понял город назначения. Выберите вариант из справочника или введите IATA-код.", reply_markup=location_keyboard(message.text))
             return
-        data = await state.get_data(); await state.clear(); await update_route(message, data["edit_route_id"], reset=True, destination=code)
+        data = await state.get_data(); await state.clear(); await update_route(message, data["edit_route_id"], reset=True, destination=selected.code, destination_airports=selected.airport_code)
 
     @dp.callback_query(F.data.startswith("edit_price:"))
     async def cb_edit_price(callback, state: FSMContext):
