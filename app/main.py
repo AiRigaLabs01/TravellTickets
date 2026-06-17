@@ -1,7 +1,6 @@
-import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -9,17 +8,19 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.city_codes import airline_label, airport_label, city_label, resolve_iata
 from app.config import TELEGRAM_BOT_TOKEN
-from app.database import SessionLocal, get_db, init_db
+from app.database import get_db, init_db
 from app.date_utils import format_msk_datetime, format_msk_time, format_route_date, parse_route_date
 from app.locations import search_locations
 from app.models import Notification, PriceCheck, TrackedRoute, WebUser
 from app.auth import find_telegram_chat_id, get_current_web_user, normalize_telegram_username, verify_telegram_access_token
+from app.repositories import RouteRepository
 from app.scheduler import check_route, load_all_routes, schedule_route, scheduler, unschedule_route
+from app.services.routes import passenger_count, reset_route_results
+from app.web_admin import install_web_admin
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ _jinja_env.globals["creator_label"] = _creator_label
 app = FastAPI(title="TravellTickets", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(env=_jinja_env)
+install_web_admin(app)
 
 
 def _tr(request: Request, name: str, context: dict | None = None):
@@ -119,39 +121,19 @@ def _enrich_route(route: TrackedRoute) -> TrackedRoute:
 
 
 def _reset_route_results(db: Session, route: TrackedRoute):
-    db.query(Notification).filter(Notification.tracked_route_id == route.id).delete()
-    db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route.id).delete()
-    route.last_best_price = None
-    route.last_checked_at = None
-    route.last_error = None
+    reset_route_results(db, route)
 
 
 def _passenger_count(value: int | None, default: int = 0, min_value: int = 0, max_value: int = 9) -> int:
-    try:
-        return max(min(int(value if value is not None else default), max_value), min_value)
-    except (TypeError, ValueError):
-        return default
+    return passenger_count(value, default, min_value, max_value)
 
 
 def _routes_for_user(db: Session, user):
-    query = db.query(TrackedRoute)
-    if user and not user.is_admin:
-        query = query.filter(TrackedRoute.web_user_id == user.id)
-    return query
+    return RouteRepository(db).query_for_web_user(user)
 
 
 def _routes_for_telegram_payload(db: Session, payload: dict):
-    chat_id = str(payload.get("chat_id") or "")
-    username = normalize_telegram_username(payload.get("telegram_username"))
-    filters = [TrackedRoute.telegram_chat_id == chat_id]
-    if username:
-        filters.extend(
-            [
-                TrackedRoute.creator_username == username,
-                TrackedRoute.notification_username == username,
-            ]
-        )
-    return db.query(TrackedRoute).filter(or_(*filters))
+    return RouteRepository(db).query_for_telegram_payload(payload)
 
 
 def _telegram_payload_or_403(token: str | None) -> dict:
@@ -210,6 +192,11 @@ async def index(request: Request, db: Session = Depends(get_db)):
         if last:
             last_checks[r.id] = last
     return _tr(request, "index.html", {"routes": routes, "last_checks": last_checks})
+
+
+@app.get("/public", response_class=HTMLResponse)
+async def public_page(request: Request):
+    return _tr(request, "public.html")
 
 
 @app.get("/tg/monitorings", response_class=HTMLResponse)
@@ -466,12 +453,17 @@ async def route_delete(request: Request, route_id: int, db: Session = Depends(ge
     return RedirectResponse("/", status_code=303)
 
 
-@app.get("/api/locations/search")
+@app.get("/api/v1/locations/search")
 async def locations_search(q: str = ""):
-    return {"items": search_locations(q)}
+    return search_locations(q)
 
 
-@app.get("/api/routes")
+@app.get("/api/locations/search")
+async def locations_search_legacy(q: str = ""):
+    return await locations_search(q)
+
+
+@app.get("/api/v1/routes")
 async def api_routes(db: Session = Depends(get_db)):
     routes = db.query(TrackedRoute).all()
     return [
@@ -496,3 +488,7 @@ async def api_routes(db: Session = Depends(get_db)):
         for r in routes
     ]
 
+
+@app.get("/api/routes")
+async def api_routes_legacy(db: Session = Depends(get_db)):
+    return await api_routes(db)

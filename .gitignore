@@ -225,3 +225,6 @@ vps_secrets.txt
 .ssh/
 operator/
 __pycache__/
+.tmp/
+pytest-cache-files-*/
+travelltickets.db

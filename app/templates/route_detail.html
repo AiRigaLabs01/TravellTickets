@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<nav class="navbar"><a class="brand" href="/">✈️ TravellTickets</a><span class="subtitle">История мониторинга</span><span class="nav-spacer"></span>{% if current_user %}<a class="nav-link" href="/profile">{{ current_user.display_name or current_user.username }}</a>{% if current_user.is_admin %}<a class="nav-link" href="/admin/users">Пользователи</a>{% endif %}<a class="nav-link" href="/logout">Выйти</a>{% endif %}</nav>
+<nav class="navbar"><a class="brand" href="/">✈️ TravellTickets</a><span class="subtitle">История мониторинга</span><span class="nav-spacer"></span>{% if current_user %}{% if current_user.is_admin %}<a class="nav-link" href="/profile">Администрирование</a>{% else %}<a class="nav-link" href="/profile">{{ current_user.display_name or current_user.username }}</a>{% endif %}<a class="nav-link" href="/logout">Выйти</a>{% endif %}</nav>
 <div class="container">
   <div style="margin-bottom:16px"><a class="back-link" href="/">← Все мониторинги</a></div>
 

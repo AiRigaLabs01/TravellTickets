@@ -3,6 +3,32 @@ from typing import Optional
 from pydantic import BaseModel, field_validator
 
 
+class RouteFormData(BaseModel):
+    origin: str
+    destination: str
+    departure_date: str
+    return_date: Optional[str] = None
+    trip_type: str = "oneway"
+    adult_seats: int = 1
+    children_seats: int = 0
+    infant_seats: int = 0
+    baggage_required: bool = False
+    max_price: float
+    interval_minutes: int = 10
+    direct_only: bool = False
+    airline_codes: Optional[str] = None
+    origin_airports: Optional[str] = None
+    destination_airports: Optional[str] = None
+    departure_time_from: Optional[str] = None
+    departure_time_to: Optional[str] = None
+    arrival_time_from: Optional[str] = None
+    arrival_time_to: Optional[str] = None
+    return_departure_time_from: Optional[str] = None
+    return_departure_time_to: Optional[str] = None
+    return_arrival_time_from: Optional[str] = None
+    return_arrival_time_to: Optional[str] = None
+
+
 class TrackedRouteCreate(BaseModel):
     title: Optional[str] = None
     telegram_chat_id: Optional[str] = None

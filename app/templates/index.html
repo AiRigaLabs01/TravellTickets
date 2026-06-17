@@ -5,14 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TravellTickets — Мониторинг дешёвых авиабилетов</title>
 <link rel="stylesheet" href="/static/style.css">
-<script nowprocket data-noptimize="1" data-cfasync="false" data-wpfc-render="false" seraph-accel-crit="1" data-no-defer="1">
-  (function () {
-      var script = document.createElement("script");
-      script.async = 1;
-      script.src = 'https://emrldco.com/NTQwNjU5.js?t=540659';
-      document.head.appendChild(script);
-  })();
-</script>
 </head>
 <body>
 <nav class="navbar">
@@ -20,8 +12,7 @@
   <span class="subtitle">Мониторинг цен на авиабилеты</span>
   <span class="nav-spacer"></span>
   {% if current_user %}
-    <a class="nav-link" href="/profile">{{ current_user.display_name or current_user.username }}</a>
-    {% if current_user.is_admin %}<a class="nav-link" href="/admin/users">Пользователи</a>{% endif %}
+    {% if current_user.is_admin %}<a class="nav-link" href="/profile">Администрирование</a>{% else %}<a class="nav-link" href="/profile">{{ current_user.display_name or current_user.username }}</a>{% endif %}
     <a class="nav-link" href="/logout">Выйти</a>
   {% endif %}
 </nav>
