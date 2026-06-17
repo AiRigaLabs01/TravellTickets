@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import date
@@ -19,6 +20,7 @@ from app.models import Notification, PriceCheck, TrackedRoute, WebUser
 from app.auth import find_telegram_chat_id, get_current_web_user, normalize_telegram_username, verify_telegram_access_token
 from app.repositories import RouteRepository
 from app.scheduler import check_route, load_all_routes, schedule_route, scheduler, unschedule_route
+from app.services.routes import delete_route as delete_route_service
 from app.services.routes import passenger_count, reset_route_results
 from app.web_admin import install_web_admin
 
@@ -182,6 +184,8 @@ def _resolve_route_notification(db: Session, user, mode: str, username: str | No
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, db: Session = Depends(get_db)):
     user = get_current_web_user(request, db)
+    if not user or not user.is_admin:
+        return _tr(request, "public.html")
     request.state.current_user = user
     routes = _routes_for_user(db, user).order_by(TrackedRoute.created_at.desc()).all()
     for r in routes:
@@ -423,7 +427,7 @@ async def route_check(request: Request, route_id: int, db: Session = Depends(get
     user = get_current_web_user(request, db)
     if not _routes_for_user(db, user).filter(TrackedRoute.id == route_id).first():
         raise HTTPException(status_code=404)
-    await check_route(route_id)
+    asyncio.create_task(check_route(route_id))
     return RedirectResponse(f"/route/{route_id}", status_code=303)
 
 
@@ -447,9 +451,7 @@ async def route_delete(request: Request, route_id: int, db: Session = Depends(ge
     user = get_current_web_user(request, db)
     route = _routes_for_user(db, user).filter(TrackedRoute.id == route_id).first()
     if route:
-        unschedule_route(route.id)
-        db.delete(route)
-        db.commit()
+        delete_route_service(db, route)
     return RedirectResponse("/", status_code=303)
 
 

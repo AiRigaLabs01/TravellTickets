@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher, F
@@ -14,9 +15,11 @@ from app.config import APP_BASE_URL, TELEGRAM_BOT_TOKEN
 from app.database import SessionLocal
 from app.date_utils import format_msk_time, format_route_date, format_route_date_long, parse_route_date
 from app.auth import create_telegram_access_token, normalize_telegram_username
-from app.locations import search_locations
 from app.models import Notification, PriceCheck, TrackedRoute
 from app.scheduler import check_route, schedule_route, unschedule_route
+from app.services.locations import location_choices as service_location_choices
+from app.services.locations import resolve_location_code, should_offer_location_choices as service_should_offer_location_choices
+from app.services.routes import delete_route as delete_route_service
 from app.yandex_links import build_yandex_travel_url_for_route
 
 logger = logging.getLogger(__name__)
@@ -121,7 +124,7 @@ def resolve_city(text: str) -> str | None:
 
 
 def location_choices(text: str) -> list[tuple[str, str]]:
-    return [(item["label"], item["value"]) for item in search_locations(text, limit=6)]
+    return service_location_choices(text, limit=6)
 
 
 def location_keyboard(text: str) -> ReplyKeyboardMarkup | None:
@@ -132,21 +135,11 @@ def location_keyboard(text: str) -> ReplyKeyboardMarkup | None:
 
 
 def resolve_location(text: str) -> str | None:
-    raw = (text or "").strip()
-    for label, value in location_choices(raw):
-        if raw == label or raw.upper() == value.upper():
-            return value.upper()
-    return resolve_city(raw)
+    return resolve_location_code(text)
 
 
 def should_offer_location_choices(text: str) -> bool:
-    raw = (text or "").strip()
-    if len(raw) == 3 and raw.isalpha():
-        return False
-    choices = location_choices(raw)
-    if len(choices) <= 1:
-        return False
-    return not any(raw == label or raw.upper() == value.upper() for label, value in choices)
+    return service_should_offer_location_choices(text)
 
 
 def parse_interval(text: str | None) -> int | None:
@@ -244,6 +237,15 @@ async def send_route(message: Message, route_id: int, prefix: str = "📊 <b>Р�
         await message.answer(f"{prefix}\n\n" + route_card(r, last), parse_mode="HTML", reply_markup=route_actions(r, message))
     finally:
         db.close()
+
+
+async def check_and_send_route(message: Message, route_id: int, prefix: str | None = None) -> None:
+    try:
+        await check_route(route_id)
+        await send_route(message, route_id, prefix or "Результат ручной проверки")
+    except Exception:
+        logger.exception("Manual route check failed")
+        await message.answer("Не удалось проверить цены. Попробуйте ещё раз.", reply_markup=main_menu())
 
 
 def reset_results(db, route: TrackedRoute):
@@ -417,12 +419,7 @@ def register_handlers(dp: Dispatcher):
             db.add(r); db.commit(); db.refresh(r); route_id = r.id; schedule_route(r)
         finally:
             db.close()
-        try:
-            await check_route(route_id)
-        except Exception as exc:
-            logger.exception("Immediate route check failed")
-            await message.answer(f"⚠️ Не удалось сразу проверить цены: {exc}", reply_markup=main_menu())
-        await send_route(message, route_id, "✅ <b>Мониторинг создан</b>")
+        asyncio.create_task(check_and_send_route(message, route_id, "✅ <b>Мониторинг создан</b>"))
 
     @dp.message(Command("list"))
     @dp.message(F.text == "📋 Мои мониторинги")
@@ -559,14 +556,13 @@ def register_handlers(dp: Dispatcher):
         if not route_ids:
             await message.answer("Нет активных мониторингов", reply_markup=main_menu())
             return
-        await message.answer(f"🔍 Проверяю {len(route_ids)} ваш(их) мониторинг(ов)...")
+        await message.answer(f"🔍 Проверка {len(route_ids)} мониторинг(ов) запущена. Пришлю результаты отдельными сообщениями.")
         for rid in route_ids:
-            await check_route(rid); await send_route(message, rid)
-        await message.answer("✅ Проверка завершена", reply_markup=main_menu())
+            asyncio.create_task(check_and_send_route(message, rid))
 
     @dp.callback_query(F.data.startswith("check:"))
     async def cb_check(callback):
-        rid = int(callback.data.split(":", 1)[1]); await callback.answer("Проверяю мониторинг..."); await check_route(rid); await send_route(callback.message, rid)
+        rid = int(callback.data.split(":", 1)[1]); await callback.answer("Проверка запущена"); asyncio.create_task(check_and_send_route(callback.message, rid))
 
     @dp.callback_query(F.data.startswith("stop:"))
     async def cb_stop(callback):
@@ -605,7 +601,7 @@ async def delete_route(message: Message, route_id: int):
         if not r:
             await message.answer(f"Мониторинг #{route_id} не найден среди ваших мониторингов")
             return
-        unschedule_route(route_id); db.delete(r); db.commit()
+        delete_route_service(db, r)
         await message.answer(f"🗑 Мониторинг #{route_id} удалён", reply_markup=main_menu())
     finally:
         db.close()

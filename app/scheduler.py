@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import DEBUG_MONITORING_MESSAGES, TELEGRAM_CHAT_ID
@@ -270,13 +271,25 @@ async def check_route(route_id: int):
             await _send_debug_message(route, db, 0, 0, None, error_msg)
             return
 
+        with db.no_autoflush:
+            still_active = db.query(TrackedRoute.id).filter(TrackedRoute.id == route_id, TrackedRoute.is_active == True).first()
+        if not still_active:
+            db.rollback()
+            logger.info(f"Route #{route_id} was deleted or disabled during check")
+            return
+
         route.last_error = None
         route.last_checked_at = datetime.utcnow()
         logger.info(f"Route #{route_id}: {flights_count} flights found, {filtered_count} after filters")
 
         if not notification_sent:
             route.no_change_checks_count = (route.no_change_checks_count or 0) + 1
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            logger.info(f"Route #{route_id} was deleted before check results could be saved")
+            return
 
         if not notification_sent and (route.no_change_checks_count or 0) >= NO_CHANGE_NOTIFY_EVERY:
             sent = await _send_no_changes_message(route, db, flights_count, filtered_count, status_flight)

@@ -12,6 +12,21 @@ def test_locations_api_v1_returns_list(monkeypatch) -> None:
     response = client.get("/api/v1/locations/search?q=Москва")
 
     assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    values = {item["value"] for item in response.json()}
+    assert {"MOW", "SVO", "VKO", "DME"}.issubset(values)
+
+
+def test_root_is_public_for_anonymous_users(monkeypatch) -> None:
+    monkeypatch.setattr(auth, "SESSION_SECRET", "test-secret")
+    monkeypatch.setattr(auth, "ADMIN_PASSWORD_HASH", "configured")
+    client = TestClient(app)
+
+    response = client.get("/", follow_redirects=False)
+
+    assert response.status_code == 200
+    assert "partner-loader.js" in response.text
+    assert "/login" in response.text
 
 
 def test_health_endpoint_shape(monkeypatch) -> None:

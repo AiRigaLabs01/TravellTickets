@@ -65,6 +65,8 @@ def _rate_limited(request: Request) -> bool:
 
 
 def _is_public_path(path: str) -> bool:
+    if path == "/":
+        return True
     if path.startswith(("/api/v1/locations/search", "/api/locations/search")):
         return True
     return path.startswith(("/public", "/login", "/logout", "/health", "/healthz", "/static/", "/tg/"))

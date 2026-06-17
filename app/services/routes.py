@@ -35,6 +35,19 @@ def reset_route_results(db: Session, route: TrackedRoute) -> None:
     route.no_change_checks_count = 0
 
 
+def delete_route(db: Session, route: TrackedRoute) -> None:
+    from app.scheduler import unschedule_route
+
+    route_id = route.id
+    route.is_active = False
+    db.commit()
+    unschedule_route(route_id)
+    db.query(Notification).filter(Notification.tracked_route_id == route_id).delete(synchronize_session=False)
+    db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route_id).delete(synchronize_session=False)
+    db.delete(route)
+    db.commit()
+
+
 def resolve_route_notification(
     db: Session,
     user: WebUser | None,
