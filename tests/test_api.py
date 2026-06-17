@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 import app.auth as auth
@@ -38,3 +40,16 @@ def test_health_endpoint_shape(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_route_form_uses_external_script_without_inline_handlers() -> None:
+    html = Path("app/templates/route_form.html").read_text(encoding="utf-8")
+    admin = Path("app/web_admin.py").read_text(encoding="utf-8")
+
+    assert '<script src="/static/route-form.js" defer></script>' in html
+    assert "<script>" not in html
+    assert "onclick=" not in html
+    assert "onchange=" not in html
+    assert "onsubmit=" not in html
+    assert "script-src 'self' https://emrldco.com" in admin
+    assert "script-src 'self' 'unsafe-inline'" not in admin
