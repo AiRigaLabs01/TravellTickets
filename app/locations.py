@@ -18,7 +18,6 @@ LOCATIONS: list[Location] = [
     Location("Москва, Шереметьево — SVO", "SVO", "airport", "Москва", ("москва", "шереметьево", "svo", "sheremetyevo")),
     Location("Москва, Внуково — VKO", "VKO", "airport", "Москва", ("москва", "внуково", "vko", "vnukovo")),
     Location("Москва, Домодедово — DME", "DME", "airport", "Москва", ("москва", "домодедово", "dme", "domodedovo")),
-    Location("Москва, Жуковский — ZIA", "ZIA", "airport", "Москва", ("москва", "жуковский", "zia", "zhukovsky")),
     Location("Санкт-Петербург — LED", "LED", "city", "Санкт-Петербург", ("санкт-петербург", "петербург", "питер", "спб", "led", "пулково")),
     Location("Сочи — AER", "AER", "city", "Сочи", ("сочи", "aer", "адлер")),
     Location("Казань — KZN", "KZN", "city", "Казань", ("казань", "kzn")),
