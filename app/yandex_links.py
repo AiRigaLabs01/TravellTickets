@@ -8,7 +8,6 @@ YANDEX_CITY_IDS = {
     "SVO": "c213",
     "DME": "c213",
     "VKO": "c213",
-    "ZIA": "c213",
     "SVX": "c54",
 }
 
