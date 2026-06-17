@@ -48,7 +48,6 @@ CITY_TO_IATA: dict[str, str] = {
     "шереметьево": "SVO",
     "домодедово": "DME",
     "внуково": "VKO",
-    "жуковский": "ZIA",
 }
 
 AIRLINE_NAMES: dict[str, str] = {
@@ -68,7 +67,6 @@ AIRPORT_NAMES: dict[str, str] = {
     "SVO": "Шереметьево",
     "DME": "Домодедово",
     "VKO": "Внуково",
-    "ZIA": "Жуковский",
     "SVX": "Екатеринбург",
     "LED": "Пулково",
     "AER": "Сочи",
@@ -78,7 +76,7 @@ AIRPORT_NAMES: dict[str, str] = {
     "KGD": "Калининград",
 }
 
-MOSCOW_AIRPORTS = ["SVO", "DME", "VKO", "ZIA"]
+MOSCOW_AIRPORTS = ["SVO", "DME", "VKO"]
 
 IATA_TO_CITY: dict[str, str] = {
     "SVX": "Екатеринбург",
@@ -92,7 +90,6 @@ IATA_TO_CITY: dict[str, str] = {
     "SVO": "Москва (Шереметьево)",
     "DME": "Москва (Домодедово)",
     "VKO": "Москва (Внуково)",
-    "ZIA": "Москва (Жуковский)",
     "KRR": "Краснодар",
     "KUF": "Самара",
     "UFA": "Уфа",
