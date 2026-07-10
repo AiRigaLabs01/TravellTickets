@@ -32,6 +32,7 @@ def test_root_is_public_for_anonymous_users(monkeypatch) -> None:
     assert "nowprocket" in response.text
     assert "data-noptimize=\"1\"" in response.text
     assert "script-src 'self' 'unsafe-inline' https://emrldco.com" in response.headers["content-security-policy"]
+    assert "style-src 'self' 'unsafe-inline' https://emrldco.com" in response.headers["content-security-policy"]
     assert (
         "connect-src 'self' https://emrldco.com https://sentry.avs.io https://www.travelpayouts.com"
         in response.headers["content-security-policy"]
@@ -49,6 +50,7 @@ def test_login_page_does_not_include_partner_script(monkeypatch) -> None:
     assert response.status_code == 200
     assert "NTQwNjU5.js" not in response.text
     assert "script-src 'self';" in response.headers["content-security-policy"]
+    assert "style-src 'self' 'unsafe-inline';" in response.headers["content-security-policy"]
     assert "connect-src 'self';" in response.headers["content-security-policy"]
 
 
