@@ -83,7 +83,12 @@ def _add_security_headers(response: Response, path: str) -> Response:
     response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
     allow_partner = _allows_partner_script(path)
     script_src = "'self' 'unsafe-inline' https://emrldco.com" if allow_partner else "'self'"
-    style_src = "'self' 'unsafe-inline' https://emrldco.com" if allow_partner else "'self' 'unsafe-inline'"
+    style_src = (
+        "'self' 'unsafe-inline' https://emrldco.com https://fonts.googleapis.com"
+        if allow_partner
+        else "'self' 'unsafe-inline'"
+    )
+    font_src = "'self' https://fonts.gstatic.com" if allow_partner else "'self'"
     connect_src = (
         "'self' https://emrldco.com https://sentry.avs.io https://www.travelpayouts.com"
         if allow_partner
@@ -92,7 +97,8 @@ def _add_security_headers(response: Response, path: str) -> Response:
     response.headers.setdefault(
         "Content-Security-Policy",
         f"default-src 'self'; script-src {script_src}; style-src {style_src}; "
-        f"img-src 'self' data: https:; connect-src {connect_src}; frame-ancestors 'none'; base-uri 'self'",
+        f"img-src 'self' data: https:; font-src {font_src}; connect-src {connect_src}; "
+        "frame-ancestors 'none'; base-uri 'self'",
     )
     return response
 
