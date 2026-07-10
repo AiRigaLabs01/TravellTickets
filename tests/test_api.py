@@ -32,7 +32,10 @@ def test_root_is_public_for_anonymous_users(monkeypatch) -> None:
     assert "nowprocket" in response.text
     assert "data-noptimize=\"1\"" in response.text
     assert "script-src 'self' 'unsafe-inline' https://emrldco.com" in response.headers["content-security-policy"]
-    assert "connect-src 'self' https://emrldco.com" in response.headers["content-security-policy"]
+    assert (
+        "connect-src 'self' https://emrldco.com https://sentry.avs.io https://www.travelpayouts.com"
+        in response.headers["content-security-policy"]
+    )
     assert "/login" in response.text
 
 

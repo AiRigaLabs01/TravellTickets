@@ -83,7 +83,11 @@ def _add_security_headers(response: Response, path: str) -> Response:
     response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
     allow_partner = _allows_partner_script(path)
     script_src = "'self' 'unsafe-inline' https://emrldco.com" if allow_partner else "'self'"
-    connect_src = "'self' https://emrldco.com" if allow_partner else "'self'"
+    connect_src = (
+        "'self' https://emrldco.com https://sentry.avs.io https://www.travelpayouts.com"
+        if allow_partner
+        else "'self'"
+    )
     response.headers.setdefault(
         "Content-Security-Policy",
         f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; "
