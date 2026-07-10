@@ -97,6 +97,8 @@ def calendar_keyboard(month: date | None = None, min_date: date | None = None) -
 def _calendar_min_date(state_name: str | None, data: dict) -> date:
     if state_name == NewRouteStates.return_date.state and data.get("departure_date"):
         return date.fromisoformat(data["departure_date"]) + timedelta(days=1)
+    if state_name == EditRouteStates.return_date.state and data.get("edit_departure_date"):
+        return date.fromisoformat(data["edit_departure_date"]) + timedelta(days=1)
     return date.today() + timedelta(days=1)
 
 
@@ -164,13 +166,20 @@ def route_actions(route: TrackedRoute, message: Message | None = None) -> Inline
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def edit_menu(route_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+def edit_menu(route_id: int, include_return_date: bool = False) -> InlineKeyboardMarkup:
+    date_row = [InlineKeyboardButton(text="📅 Дата туда", callback_data=f"edit_date:{route_id}")]
+    if include_return_date:
+        date_row.append(InlineKeyboardButton(text="↩️ Дата обратно", callback_data=f"edit_return_date:{route_id}"))
+    else:
+        date_row.insert(0, InlineKeyboardButton(text="💰 Цена", callback_data=f"edit_price:{route_id}"))
+    rows = [
         [InlineKeyboardButton(text="🛫 Откуда", callback_data=f"edit_origin:{route_id}"), InlineKeyboardButton(text="🛬 Куда", callback_data=f"edit_destination:{route_id}")],
-        [InlineKeyboardButton(text="💰 Цена", callback_data=f"edit_price:{route_id}"), InlineKeyboardButton(text="📅 Дата", callback_data=f"edit_date:{route_id}")],
+        date_row,
+        [InlineKeyboardButton(text="💰 Цена", callback_data=f"edit_price:{route_id}")] if include_return_date else [],
         [InlineKeyboardButton(text="👥 Пассажиры", callback_data=f"edit_passengers:{route_id}"), InlineKeyboardButton(text="🧳 Багаж", callback_data=f"edit_baggage:{route_id}")],
         [InlineKeyboardButton(text="⏱ Интервал", callback_data=f"edit_interval:{route_id}"), InlineKeyboardButton(text="🎯 Прямые", callback_data=f"edit_direct:{route_id}")],
-    ])
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[row for row in rows if row])
 
 
 def fmt_price(v) -> str:
@@ -348,7 +357,7 @@ class NewRouteStates(StatesGroup):
 
 
 class EditRouteStates(StatesGroup):
-    origin = State(); destination = State(); price = State(); date = State(); passengers = State(); interval = State()
+    origin = State(); destination = State(); price = State(); date = State(); return_date = State(); passengers = State(); interval = State()
 
 
 def create_bot() -> tuple[Bot, Dispatcher]:
@@ -450,7 +459,7 @@ def register_handlers(dp: Dispatcher):
     async def calendar_callback(callback, state: FSMContext):
         state_name = await state.get_state()
         data = await state.get_data()
-        if state_name not in {NewRouteStates.departure_date.state, NewRouteStates.return_date.state, EditRouteStates.date.state}:
+        if state_name not in {NewRouteStates.departure_date.state, NewRouteStates.return_date.state, EditRouteStates.date.state, EditRouteStates.return_date.state}:
             await callback.answer()
             return
 
@@ -514,6 +523,9 @@ def register_handlers(dp: Dispatcher):
 
         data = await state.get_data()
         await state.clear()
+        if state_name == EditRouteStates.return_date.state:
+            await update_route(callback.message, data["edit_route_id"], reset=True, return_date=selected_iso, trip_type="roundtrip")
+            return
         await update_route(callback.message, data["edit_route_id"], reset=True, departure_date=selected_iso)
 
     @dp.message(NewRouteStates.passengers)
@@ -590,8 +602,14 @@ def register_handlers(dp: Dispatcher):
     @dp.callback_query(F.data.startswith("edit:"))
     async def edit(callback):
         route_id = int(callback.data.split(":", 1)[1])
+        db = SessionLocal()
+        try:
+            route = owned_route(db, callback.message, route_id)
+            include_return_date = bool(route and route.trip_type == "roundtrip")
+        finally:
+            db.close()
         await callback.answer("Что изменить?")
-        await callback.message.answer("✏️ Что изменить в мониторинге?", reply_markup=edit_menu(route_id))
+        await callback.message.answer("✏️ Что изменить в мониторинге?", reply_markup=edit_menu(route_id, include_return_date))
 
     async def ask_edit(callback, state, route_id: int, st, text: str):
         await state.update_data(edit_route_id=route_id); await state.set_state(st); await callback.answer(); await callback.message.answer(text, parse_mode="HTML")
@@ -661,6 +679,44 @@ def register_handlers(dp: Dispatcher):
             await message.answer("Неверный формат даты. Выберите дату в календаре или введите как <b>21.06.2026</b> / <b>2026-06-21</b>.", parse_mode="HTML", reply_markup=calendar_keyboard())
             return
         data = await state.get_data(); await state.clear(); await update_route(message, data["edit_route_id"], reset=True, departure_date=d)
+
+    @dp.callback_query(F.data.startswith("edit_return_date:"))
+    async def cb_edit_return_date(callback, state: FSMContext):
+        route_id = int(callback.data.split(":", 1)[1])
+        db = SessionLocal()
+        try:
+            route = owned_route(db, callback.message, route_id)
+            if not route or route.trip_type != "roundtrip":
+                await callback.answer("Это не маршрут туда-обратно")
+                return
+            await state.update_data(edit_route_id=route_id, edit_departure_date=route.departure_date)
+        finally:
+            db.close()
+        await state.set_state(EditRouteStates.return_date)
+        await callback.answer()
+        await callback.message.answer(
+            "Выберите новую дату обратного вылета или введите вручную: <b>28.06.2026</b> / <b>2026-06-28</b>",
+            parse_mode="HTML",
+            reply_markup=calendar_keyboard(min_date=date.fromisoformat(route.departure_date) + timedelta(days=1)),
+        )
+
+    @dp.message(EditRouteStates.return_date)
+    async def edit_return_date(message: Message, state: FSMContext):
+        data = await state.get_data()
+        min_allowed = _calendar_min_date(EditRouteStates.return_date.state, data)
+        if (message.text or "").strip() == MANUAL_DATE_BUTTON:
+            await message.answer("Введите новую дату обратного вылета: <b>28.06.2026</b> или <b>2026-06-28</b>", parse_mode="HTML")
+            return
+        d = parse_route_date(message.text)
+        if not d:
+            await message.answer("Неверный формат даты. Выберите дату в календаре или введите как <b>28.06.2026</b> / <b>2026-06-28</b>.", parse_mode="HTML", reply_markup=calendar_keyboard(min_date=min_allowed))
+            return
+        selected = date.fromisoformat(d)
+        if selected < min_allowed:
+            await message.answer("Дата возвращения должна быть позже даты вылета.", reply_markup=calendar_keyboard(min_date=min_allowed))
+            return
+        await state.clear()
+        await update_route(message, data["edit_route_id"], reset=True, return_date=d, trip_type="roundtrip")
 
     @dp.callback_query(F.data.startswith("edit_passengers:"))
     async def cb_edit_passengers(callback, state: FSMContext):

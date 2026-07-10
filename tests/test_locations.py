@@ -69,3 +69,23 @@ def test_telegram_calendar_keyboard_offers_clickable_dates() -> None:
     assert MANUAL_DATE_BUTTON in texts
     assert "cal:pick:2026-07-11" in callbacks
     assert "cal:nav:2026-08-01" in callbacks
+
+
+def test_telegram_edit_menu_has_return_date_only_for_roundtrip() -> None:
+    from app.telegram_bot import edit_menu
+
+    oneway_callbacks = [
+        button.callback_data
+        for row in edit_menu(10).inline_keyboard
+        for button in row
+    ]
+    roundtrip_callbacks = [
+        button.callback_data
+        for row in edit_menu(10, include_return_date=True).inline_keyboard
+        for button in row
+    ]
+
+    assert "edit_date:10" in oneway_callbacks
+    assert "edit_return_date:10" not in oneway_callbacks
+    assert "edit_date:10" in roundtrip_callbacks
+    assert "edit_return_date:10" in roundtrip_callbacks
