@@ -1,5 +1,7 @@
 import asyncio
+import calendar
 import logging
+from datetime import date, timedelta
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -39,6 +41,62 @@ def main_menu() -> ReplyKeyboardMarkup:
 
 def kb(rows: list[list[str]]) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=x) for x in r] for r in rows], resize_keyboard=True, one_time_keyboard=True)
+
+
+MANUAL_DATE_BUTTON = "Ввести дату вручную"
+CALENDAR_MONTHS = [
+    "",
+    "Январь",
+    "Февраль",
+    "Март",
+    "Апрель",
+    "Май",
+    "Июнь",
+    "Июль",
+    "Август",
+    "Сентябрь",
+    "Октябрь",
+    "Ноябрь",
+    "Декабрь",
+]
+
+
+def _month_shift(first_day: date, months: int) -> date:
+    month_index = first_day.month - 1 + months
+    year = first_day.year + month_index // 12
+    month = month_index % 12 + 1
+    return date(year, month, 1)
+
+
+def calendar_keyboard(month: date | None = None, min_date: date | None = None) -> InlineKeyboardMarkup:
+    min_allowed = min_date or (date.today() + timedelta(days=1))
+    current = (month or min_allowed).replace(day=1)
+    prev_month = _month_shift(current, -1)
+    next_month = _month_shift(current, 1)
+    rows: list[list[InlineKeyboardButton]] = [[
+        InlineKeyboardButton(text="‹", callback_data=f"cal:nav:{prev_month.isoformat()}" if current > min_allowed.replace(day=1) else "cal:noop"),
+        InlineKeyboardButton(text=f"{CALENDAR_MONTHS[current.month]} {current.year}", callback_data="cal:noop"),
+        InlineKeyboardButton(text="›", callback_data=f"cal:nav:{next_month.isoformat()}"),
+    ]]
+    rows.append([InlineKeyboardButton(text=day, callback_data="cal:noop") for day in ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]])
+    for week in calendar.monthcalendar(current.year, current.month):
+        row = []
+        for day in week:
+            if day == 0:
+                row.append(InlineKeyboardButton(text=" ", callback_data="cal:noop"))
+                continue
+            value = date(current.year, current.month, day)
+            callback_data = f"cal:pick:{value.isoformat()}" if value >= min_allowed else "cal:noop"
+            row.append(InlineKeyboardButton(text=str(day), callback_data=callback_data))
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text=MANUAL_DATE_BUTTON, callback_data="cal:manual")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _calendar_min_date(state_name: str | None, data: dict) -> date:
+    if state_name == NewRouteStates.return_date.state and data.get("departure_date"):
+        return date.fromisoformat(data["departure_date"]) + timedelta(days=1)
+    return date.today() + timedelta(days=1)
 
 
 def chat_id(message: Message) -> str:
@@ -348,19 +406,23 @@ def register_handlers(dp: Dispatcher):
     async def new_trip_type(message: Message, state: FSMContext):
         await state.update_data(trip_type="roundtrip" if (message.text or "").lower().strip() == "туда-обратно" else "oneway")
         await state.set_state(NewRouteStates.departure_date)
-        await message.answer("Введите дату вылета туда: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML")
+        await message.answer("Выберите дату вылета туда в календаре или введите вручную: <b>21.06.2026</b> / <b>2026-06-21</b>", parse_mode="HTML", reply_markup=calendar_keyboard())
 
     @dp.message(NewRouteStates.departure_date)
     async def new_date(message: Message, state: FSMContext):
+        if (message.text or "").strip() == MANUAL_DATE_BUTTON:
+            await message.answer("Введите дату вылета туда: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML")
+            return
         d = parse_route_date(message.text)
         if not d:
-            await message.answer("Неверный формат. Введите дату как <b>21.06.2026</b> или <b>2026-06-21</b>:", parse_mode="HTML")
+            await message.answer("Неверный формат. Выберите дату в календаре или введите как <b>21.06.2026</b> / <b>2026-06-21</b>:", parse_mode="HTML", reply_markup=calendar_keyboard())
             return
         await state.update_data(departure_date=d)
         data = await state.get_data()
         if data.get("trip_type") == "roundtrip":
             await state.set_state(NewRouteStates.return_date)
-            await message.answer("Введите дату обратного вылета: <b>28.06.2026</b> или <b>2026-06-28</b>", parse_mode="HTML")
+            departure = date.fromisoformat(d)
+            await message.answer("Выберите дату обратного вылета в календаре или введите вручную: <b>28.06.2026</b> / <b>2026-06-28</b>", parse_mode="HTML", reply_markup=calendar_keyboard(min_date=departure + timedelta(days=1)))
         else:
             await state.update_data(return_date=None)
             await state.set_state(NewRouteStates.passengers)
@@ -368,13 +430,88 @@ def register_handlers(dp: Dispatcher):
 
     @dp.message(NewRouteStates.return_date)
     async def new_return_date(message: Message, state: FSMContext):
+        if (message.text or "").strip() == MANUAL_DATE_BUTTON:
+            await message.answer("Введите дату обратного вылета: <b>28.06.2026</b> или <b>2026-06-28</b>", parse_mode="HTML")
+            return
         d = parse_route_date(message.text)
         if not d:
-            await message.answer("Неверный формат. Введите дату обратно как <b>28.06.2026</b> или <b>2026-06-28</b>:", parse_mode="HTML")
+            data = await state.get_data()
+            departure = date.fromisoformat(data["departure_date"]) if data.get("departure_date") else date.today()
+            await message.answer("Неверный формат. Выберите дату в календаре или введите как <b>28.06.2026</b> / <b>2026-06-28</b>:", parse_mode="HTML", reply_markup=calendar_keyboard(min_date=departure + timedelta(days=1)))
             return
         await state.update_data(return_date=d)
         await state.set_state(NewRouteStates.passengers)
         await message.answer("Выберите пассажиров или введите вручную: <b>2,1,0</b>", parse_mode="HTML", reply_markup=kb([["1 взрослый", "2 взрослых"], ["1 взрослый + 1 ребёнок", "2 взрослых + 1 ребёнок"]]))
+
+    @dp.callback_query(F.data.startswith("cal:"))
+    async def calendar_callback(callback, state: FSMContext):
+        state_name = await state.get_state()
+        data = await state.get_data()
+        if state_name not in {NewRouteStates.departure_date.state, NewRouteStates.return_date.state, EditRouteStates.date.state}:
+            await callback.answer()
+            return
+
+        parts = (callback.data or "cal:noop").split(":", 2)
+        action = parts[1] if len(parts) > 1 else "noop"
+        value = parts[2] if len(parts) > 2 else ""
+        min_allowed = _calendar_min_date(state_name, data)
+        if action == "noop":
+            await callback.answer()
+            return
+        if action == "nav":
+            month = date.fromisoformat(value)
+            await callback.message.edit_reply_markup(reply_markup=calendar_keyboard(month=month, min_date=min_allowed))
+            await callback.answer()
+            return
+        if action == "manual":
+            await callback.answer()
+            await callback.message.answer("Введите дату вручную: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML")
+            return
+        if action != "pick":
+            await callback.answer()
+            return
+
+        selected = date.fromisoformat(value)
+        if selected < min_allowed:
+            await callback.answer("Эта дата уже недоступна")
+            return
+        selected_iso = selected.isoformat()
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.answer("Дата выбрана")
+
+        if state_name == NewRouteStates.departure_date.state:
+            await state.update_data(departure_date=selected_iso)
+            data = await state.get_data()
+            if data.get("trip_type") == "roundtrip":
+                await state.set_state(NewRouteStates.return_date)
+                await callback.message.answer(
+                    "Выберите дату обратного вылета в календаре или введите вручную: <b>28.06.2026</b> / <b>2026-06-28</b>",
+                    parse_mode="HTML",
+                    reply_markup=calendar_keyboard(min_date=selected + timedelta(days=1)),
+                )
+                return
+            await state.update_data(return_date=None)
+            await state.set_state(NewRouteStates.passengers)
+            await callback.message.answer(
+                "Выберите пассажиров или введите вручную: <b>2,1,0</b>",
+                parse_mode="HTML",
+                reply_markup=kb([["1 взрослый", "2 взрослых"], ["1 взрослый + 1 ребёнок", "2 взрослых + 1 ребёнок"]]),
+            )
+            return
+
+        if state_name == NewRouteStates.return_date.state:
+            await state.update_data(return_date=selected_iso)
+            await state.set_state(NewRouteStates.passengers)
+            await callback.message.answer(
+                "Выберите пассажиров или введите вручную: <b>2,1,0</b>",
+                parse_mode="HTML",
+                reply_markup=kb([["1 взрослый", "2 взрослых"], ["1 взрослый + 1 ребёнок", "2 взрослых + 1 ребёнок"]]),
+            )
+            return
+
+        data = await state.get_data()
+        await state.clear()
+        await update_route(callback.message, data["edit_route_id"], reset=True, departure_date=selected_iso)
 
     @dp.message(NewRouteStates.passengers)
     async def new_passengers(message: Message, state: FSMContext):
@@ -501,13 +638,24 @@ def register_handlers(dp: Dispatcher):
 
     @dp.callback_query(F.data.startswith("edit_date:"))
     async def cb_edit_date(callback, state: FSMContext):
-        await ask_edit(callback, state, int(callback.data.split(":", 1)[1]), EditRouteStates.date, "Введите новую дату вылета: <b>21.06.2026</b> или <b>2026-06-21</b>")
+        route_id = int(callback.data.split(":", 1)[1])
+        await state.update_data(edit_route_id=route_id)
+        await state.set_state(EditRouteStates.date)
+        await callback.answer()
+        await callback.message.answer(
+            "Выберите новую дату вылета или введите вручную: <b>21.06.2026</b> / <b>2026-06-21</b>",
+            parse_mode="HTML",
+            reply_markup=calendar_keyboard(),
+        )
 
     @dp.message(EditRouteStates.date)
     async def edit_date(message: Message, state: FSMContext):
+        if (message.text or "").strip() == MANUAL_DATE_BUTTON:
+            await message.answer("Введите новую дату вылета: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML")
+            return
         d = parse_route_date(message.text)
         if not d:
-            await message.answer("Неверный формат даты.")
+            await message.answer("Неверный формат даты. Выберите дату в календаре или введите как <b>21.06.2026</b> / <b>2026-06-21</b>.", parse_mode="HTML", reply_markup=calendar_keyboard())
             return
         data = await state.get_data(); await state.clear(); await update_route(message, data["edit_route_id"], reset=True, departure_date=d)
 

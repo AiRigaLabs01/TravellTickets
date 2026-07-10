@@ -51,3 +51,21 @@ def test_telegram_location_helpers_use_shared_resolver() -> None:
 
 def test_city_label_uses_airports_data_for_new_codes() -> None:
     assert city_label("REN") == "Оренбург"
+
+
+def test_telegram_calendar_keyboard_offers_clickable_dates() -> None:
+    from datetime import date
+
+    from app.telegram_bot import MANUAL_DATE_BUTTON, calendar_keyboard
+
+    markup = calendar_keyboard(min_date=date(2026, 7, 11))
+    buttons = [button for row in markup.inline_keyboard for button in row]
+    texts = [button.text for button in buttons]
+    callbacks = [button.callback_data for button in buttons]
+
+    assert "Июль 2026" in texts
+    assert "11" in texts
+    assert "18" in texts
+    assert MANUAL_DATE_BUTTON in texts
+    assert "cal:pick:2026-07-11" in callbacks
+    assert "cal:nav:2026-08-01" in callbacks

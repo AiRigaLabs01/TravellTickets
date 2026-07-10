@@ -27,7 +27,9 @@ def test_root_is_public_for_anonymous_users(monkeypatch) -> None:
     response = client.get("/", follow_redirects=False)
 
     assert response.status_code == 200
-    assert "partner-loader.js" in response.text
+    assert "https://emrldco.com/NTQwNjU5.js?t=540659" in response.text
+    assert "nowprocket" in response.text
+    assert "data-noptimize=\"1\"" in response.text
     assert "/login" in response.text
 
 
