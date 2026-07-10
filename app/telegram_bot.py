@@ -1,6 +1,7 @@
 import asyncio
 import calendar
 import logging
+import socket
 from datetime import date, timedelta
 
 from aiogram import Bot, Dispatcher, F
@@ -353,7 +354,9 @@ class EditRouteStates(StatesGroup):
 def create_bot() -> tuple[Bot, Dispatcher]:
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
-    b = Bot(token=TELEGRAM_BOT_TOKEN, session=AiohttpSession(timeout=60))
+    session = AiohttpSession(timeout=180)
+    session._connector_init["family"] = socket.AF_INET
+    b = Bot(token=TELEGRAM_BOT_TOKEN, session=session)
     d = Dispatcher(storage=MemoryStorage())
     register_handlers(d)
     return b, d

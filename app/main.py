@@ -39,7 +39,7 @@ async def _run_telegram_polling(app: FastAPI):
         app.state.dp = d
         try:
             logger.info("Telegram bot polling started")
-            await d.start_polling(b, handle_signals=False)
+            await d.start_polling(b, handle_signals=False, polling_timeout=30)
         except asyncio.CancelledError:
             raise
         except Exception as e:

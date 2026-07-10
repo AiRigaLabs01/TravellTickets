@@ -27,10 +27,24 @@ def test_root_is_public_for_anonymous_users(monkeypatch) -> None:
     response = client.get("/", follow_redirects=False)
 
     assert response.status_code == 200
-    assert "https://emrldco.com/NTQwNjU5.js?t=540659" in response.text
+    assert "script.src = 'https://emrldco.com/NTQwNjU5.js?t=540659';" in response.text
+    assert "document.head.appendChild(script);" in response.text
     assert "nowprocket" in response.text
     assert "data-noptimize=\"1\"" in response.text
+    assert "script-src 'self' 'unsafe-inline' https://emrldco.com" in response.headers["content-security-policy"]
     assert "/login" in response.text
+
+
+def test_login_page_does_not_include_partner_script(monkeypatch) -> None:
+    monkeypatch.setattr(auth, "SESSION_SECRET", "test-secret")
+    monkeypatch.setattr(auth, "ADMIN_PASSWORD_HASH", "configured")
+    client = TestClient(app)
+
+    response = client.get("/login", follow_redirects=False)
+
+    assert response.status_code == 200
+    assert "NTQwNjU5.js" not in response.text
+    assert "script-src 'self';" in response.headers["content-security-policy"]
 
 
 def test_health_endpoint_shape(monkeypatch) -> None:
@@ -46,12 +60,10 @@ def test_health_endpoint_shape(monkeypatch) -> None:
 
 def test_route_form_uses_external_script_without_inline_handlers() -> None:
     html = Path("app/templates/route_form.html").read_text(encoding="utf-8")
-    admin = Path("app/web_admin.py").read_text(encoding="utf-8")
 
     assert '<script src="/static/route-form.js" defer></script>' in html
+    assert "partner_script.html" not in html
     assert "<script>" not in html
     assert "onclick=" not in html
     assert "onchange=" not in html
     assert "onsubmit=" not in html
-    assert "script-src 'self' https://emrldco.com" in admin
-    assert "script-src 'self' 'unsafe-inline'" not in admin

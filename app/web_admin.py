@@ -72,14 +72,19 @@ def _is_public_path(path: str) -> bool:
     return path.startswith(("/public", "/login", "/logout", "/health", "/healthz", "/static/", "/tg/"))
 
 
-def _add_security_headers(response: Response) -> Response:
+def _allows_partner_script(path: str) -> bool:
+    return path == "/" or path.startswith(("/public", "/tg/"))
+
+
+def _add_security_headers(response: Response, path: str) -> Response:
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer-when-downgrade")
     response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    script_src = "'self' 'unsafe-inline' https://emrldco.com" if _allows_partner_script(path) else "'self'"
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self' https://emrldco.com; style-src 'self' 'unsafe-inline'; "
+        f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'",
     )
     return response
@@ -114,7 +119,7 @@ def install_web_admin(app: FastAPI) -> None:
             finally:
                 db.close()
         response = await call_next(request)
-        return _add_security_headers(response)
+        return _add_security_headers(response, request.url.path)
 
     @app.get("/health/")
     async def health(db: Session = Depends(get_db)) -> dict[str, str]:

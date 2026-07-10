@@ -27,7 +27,7 @@ services:
       - 1.1.1.1
       - 8.8.8.8
     extra_hosts:
-      - "api.telegram.org:149.154.166.110"
+      - "api.telegram.org:149.154.167.220"
     depends_on:
       - db
     security_opt:
