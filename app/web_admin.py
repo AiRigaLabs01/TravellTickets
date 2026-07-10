@@ -81,11 +81,13 @@ def _add_security_headers(response: Response, path: str) -> Response:
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer-when-downgrade")
     response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
-    script_src = "'self' 'unsafe-inline' https://emrldco.com" if _allows_partner_script(path) else "'self'"
+    allow_partner = _allows_partner_script(path)
+    script_src = "'self' 'unsafe-inline' https://emrldco.com" if allow_partner else "'self'"
+    connect_src = "'self' https://emrldco.com" if allow_partner else "'self'"
     response.headers.setdefault(
         "Content-Security-Policy",
         f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'",
+        f"img-src 'self' data: https:; connect-src {connect_src}; frame-ancestors 'none'; base-uri 'self'",
     )
     return response
 
