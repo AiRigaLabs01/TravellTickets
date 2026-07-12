@@ -149,7 +149,7 @@ def build_no_changes_text(route: Any, flights_count: int, filtered_count: int, b
         f"⏱ Период: {route.interval_minutes} мин",
         "",
         f"Найдено API: {flights_count}",
-        f"После фильтров по лимиту: {filtered_count}",
+        f"Подходящих под все условия: {filtered_count}",
     ]
     if best_flight:
         lines.append("")
@@ -177,7 +177,7 @@ def build_debug_monitoring_text(route: Any, flights_count: int, filtered_count: 
         lines.append(f"⚠️ Ошибка API/проверки: {error}")
     else:
         lines.append(f"Найдено API: {flights_count}")
-        lines.append(f"После фильтров по лимиту: {filtered_count}")
+        lines.append(f"Подходящих под все условия: {filtered_count}")
         if best_flight:
             lines.append("")
             lines.extend(_best_flight_lines(route, best_flight))
