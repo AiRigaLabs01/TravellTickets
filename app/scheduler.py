@@ -24,6 +24,7 @@ from app.yandex_links import build_yandex_travel_url_for_route
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 NO_CHANGE_NOTIFY_EVERY = 3
+MAX_STORED_FOUND_VARIANTS = 10
 
 
 def _find_chat_id_by_username(db: Session, username: str | None) -> str | None:
@@ -110,6 +111,31 @@ def _make_price_check(route: TrackedRoute, flight: dict, yandex_url: str, matche
     )
 
 
+def _flight_key(flight: dict) -> tuple:
+    return (
+        flight.get("airline"),
+        flight.get("flight_number"),
+        flight.get("origin_airport"),
+        flight.get("destination_airport"),
+        flight.get("departure_at"),
+        int(flight.get("price", 0) or 0),
+    )
+
+
+def _flight_matches(route: TrackedRoute, flight: dict) -> bool:
+    return bool(apply_filters([flight], route, enforce_price=True))
+
+
+def _store_found_variants(db: Session, route: TrackedRoute, flights: list[dict], yandex_url: str, stored_keys: set[tuple]) -> None:
+    candidates = sorted(flights, key=lambda f: (f.get("price", 10**12), f.get("departure_at") or datetime.max))
+    for flight in candidates[:MAX_STORED_FOUND_VARIANTS]:
+        key = _flight_key(flight)
+        if key in stored_keys:
+            continue
+        db.add(_make_price_check(route, flight, yandex_url, _flight_matches(route, flight)))
+        stored_keys.add(key)
+
+
 def _return_leg_route(route: TrackedRoute):
     return SimpleNamespace(
         origin=route.destination,
@@ -167,6 +193,37 @@ def _best_roundtrip(outbound: list[dict], inbound: list[dict], yandex_url: str) 
     return best
 
 
+def _roundtrip_matches(route: TrackedRoute, return_route, outbound: dict, inbound: dict, combo: dict) -> bool:
+    return (
+        combo["price"] <= route.max_price
+        and bool(apply_filters([outbound], route, enforce_price=False))
+        and bool(apply_filters([inbound], return_route, enforce_price=False))
+    )
+
+
+def _store_roundtrip_found_variants(
+    db: Session,
+    route: TrackedRoute,
+    return_route,
+    outbound_flights: list[dict],
+    return_flights: list[dict],
+    yandex_url: str,
+    stored_keys: set[tuple],
+) -> None:
+    pairs = [
+        (outbound, inbound, _roundtrip_flight(outbound, inbound, yandex_url))
+        for outbound in outbound_flights
+        for inbound in return_flights
+    ]
+    pairs.sort(key=lambda pair: (pair[2].get("price", 10**12), pair[2].get("departure_at") or datetime.max))
+    for outbound, inbound, combo in pairs[:MAX_STORED_FOUND_VARIANTS]:
+        key = _flight_key(combo)
+        if key in stored_keys:
+            continue
+        db.add(_make_price_check(route, combo, yandex_url, _roundtrip_matches(route, return_route, outbound, inbound, combo)))
+        stored_keys.add(key)
+
+
 async def _send_debug_message(route: TrackedRoute, db: Session, flights_count: int, filtered_count: int, best_flight: dict | None, error: str | None = None):
     if not DEBUG_MONITORING_MESSAGES:
         return
@@ -195,12 +252,14 @@ async def _check_roundtrip(route: TrackedRoute, db: Session):
         best["limit_price"] = route.max_price
     total_api_count = len(outbound_flights) + len(return_flights)
     notification_sent = False
+    stored_keys: set[tuple] = set()
 
     if best:
         matches = best["price"] <= route.max_price
         price_check = _make_price_check(route, best, yandex_url, matches)
         db.add(price_check)
         db.flush()
+        stored_keys.add(_flight_key(best))
         if matches and _should_notify(route, best, db):
             text = build_notification_text(route, best)
             sent = await _send_to_route_recipients(route, db, text)
@@ -211,6 +270,7 @@ async def _check_roundtrip(route: TrackedRoute, db: Session):
         if matches and (route.last_best_price is None or best["price"] < route.last_best_price):
             route.last_best_price = best["price"]
 
+    _store_roundtrip_found_variants(db, route, return_route, outbound_flights, return_flights, yandex_url, stored_keys)
     return total_api_count, filtered_count, best, notification_sent
 
 
@@ -227,12 +287,14 @@ async def _check_oneway(route: TrackedRoute, db: Session):
 
     yandex_url = build_yandex_travel_url_for_route(route)
     notification_sent = False
+    stored_keys: set[tuple] = set()
 
     for flight in sorted(filtered, key=lambda f: f.get("price", 10**12)):
         flight["yandex_travel_url"] = yandex_url
         price_check = _make_price_check(route, flight, yandex_url, True)
         db.add(price_check)
         db.flush()
+        stored_keys.add(_flight_key(flight))
         if _should_notify(route, flight, db):
             text = build_notification_text(route, flight)
             sent = await _send_to_route_recipients(route, db, text)
@@ -246,6 +308,9 @@ async def _check_oneway(route: TrackedRoute, db: Session):
     if not filtered and best_any_flight:
         best_any_flight["yandex_travel_url"] = yandex_url
         db.add(_make_price_check(route, best_any_flight, yandex_url, False))
+        stored_keys.add(_flight_key(best_any_flight))
+
+    _store_found_variants(db, route, flights, yandex_url, stored_keys)
 
     return len(flights), len(filtered), status_flight, notification_sent
 

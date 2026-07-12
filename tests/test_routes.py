@@ -124,3 +124,46 @@ def test_search_prices_queries_next_day_for_midnight_window(monkeypatch) -> None
 
     assert calls == ["2026-06-20", "2026-06-21"]
     assert [flight["flight_number"] for flight in flights] == ["2026-06-20", "2026-06-21"]
+
+
+def test_check_oneway_stores_found_variants_outside_filters(monkeypatch) -> None:
+    import asyncio
+    from datetime import datetime
+
+    import app.scheduler as scheduler
+
+    init_db()
+    db = SessionLocal()
+    try:
+        route = TrackedRoute(
+            origin="SVX",
+            destination="MOW",
+            departure_date="2026-06-20",
+            max_price=5000,
+            direct_only=False,
+            departure_time_from="18:00",
+            departure_time_to="23:00",
+        )
+        db.add(route)
+        db.commit()
+        db.refresh(route)
+
+        async def fake_search_prices(_route: TrackedRoute) -> list[dict]:
+            return [
+                {"price": 4500, "transfers": 0, "airline": "U6", "flight_number": "100", "origin_airport": "SVX", "destination_airport": "DME", "departure_at": datetime(2026, 6, 20, 20, 0), "estimated_arrival_at": None},
+                {"price": 4200, "transfers": 0, "airline": "U6", "flight_number": "101", "origin_airport": "SVX", "destination_airport": "DME", "departure_at": datetime(2026, 6, 20, 10, 0), "estimated_arrival_at": None},
+                {"price": 7000, "transfers": 0, "airline": "U6", "flight_number": "102", "origin_airport": "SVX", "destination_airport": "DME", "departure_at": datetime(2026, 6, 20, 21, 0), "estimated_arrival_at": None},
+            ]
+
+        monkeypatch.setattr(scheduler, "search_prices", fake_search_prices)
+
+        flights_count, filtered_count, _best, _sent = asyncio.run(scheduler._check_oneway(route, db))
+        db.commit()
+
+        checks = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route.id).order_by(PriceCheck.price).all()
+        assert flights_count == 3
+        assert filtered_count == 1
+        assert len(checks) == 3
+        assert [check.matches_filters for check in checks] == [False, True, False]
+    finally:
+        db.close()

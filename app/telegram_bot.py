@@ -165,7 +165,9 @@ def monitorings_web_url(message: Message) -> str:
 def route_actions(route: TrackedRoute, message: Message | None = None) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text="🔎 Проверить сейчас", callback_data=f"check:{route.id}"), InlineKeyboardButton(text="🔗 Яндекс", url=build_yandex_travel_url_for_route(route))]]
     if public_app_url():
-        rows.append([InlineKeyboardButton(text="📈 История", url=route_web_url(route, message))])
+        rows.append([InlineKeyboardButton(text="📈 История", url=route_web_url(route, message)), InlineKeyboardButton(text="📋 Найденные", callback_data=f"found:{route.id}")])
+    else:
+        rows.append([InlineKeyboardButton(text="📋 Найденные варианты", callback_data=f"found:{route.id}")])
     rows.append([InlineKeyboardButton(text="✏️ Изменить", callback_data=f"edit:{route.id}"), InlineKeyboardButton(text="⏸ Остановить", callback_data=f"stop:{route.id}")])
     rows.append([InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete:{route.id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -332,7 +334,7 @@ def route_card(route: TrackedRoute, last: PriceCheck | None = None) -> str:
             lines += ["", "<b>Текущая проверка</b>", f"💵 Цена: {fmt_price(last.price)}"]
         else:
             diff = int(last.price - route.max_price)
-            lines += ["", "<b>Минимальная найденная цена выше вашего лимита</b>", f"💵 Найдено: {fmt_price(last.price)}", f"🎯 Ваш лимит: {fmt_price(route.max_price)}"]
+            lines += ["", "<b>Последний найденный вариант не подходит под условия</b>", f"💵 Найдено: {fmt_price(last.price)}", f"🎯 Ваш лимит: {fmt_price(route.max_price)}"]
             if diff > 0:
                 lines.append(f"↗️ Выше лимита на {fmt_price(diff)}")
         lines += [
@@ -345,6 +347,37 @@ def route_card(route: TrackedRoute, last: PriceCheck | None = None) -> str:
     else:
         lines += ["", "<b>Текущая проверка</b>", "Пока нет данных. Проверка могла не найти билетов по условиям или API ещё не вернул результат."]
     return "\n".join(lines)
+
+
+def _found_variant_line(check: PriceCheck, index: int) -> str:
+    status = "✅ подходит" if check.matches_filters else "⚠️ не подходит"
+    transfers = "без пересадок" if not check.transfers else f"пересадок: {check.transfers}"
+    return "\n".join([
+        f"{index}. <b>{fmt_price(check.price)}</b> · {status}",
+        f"   ✈️ {check.airline or '—'} {check.flight_number or ''}".rstrip(),
+        f"   🛬 {check.origin_airport or check.origin or '—'} → {check.destination_airport or check.destination or '—'} · {transfers}",
+        f"   🕓 {format_msk_time(check.departure_at)} → {format_msk_time(check.estimated_arrival_at)}",
+        f"   🏷 {check.gate or '—'}",
+    ])
+
+
+def found_variants_text(route: TrackedRoute, checks: list[PriceCheck]) -> str:
+    lines = [
+        "📋 <b>Найденные варианты</b>",
+        f"{city_label(route.origin)} → {city_label(route.destination)}",
+        "",
+    ]
+    if not checks:
+        lines.append("Пока нет сохранённых вариантов. Нажмите «Проверить сейчас», чтобы получить свежие данные.")
+        return "\n".join(lines)
+    lines.append("Показываю последние варианты из проверок, включая те, что не прошли лимит, время, аэропорты или другие фильтры.")
+    lines.append("")
+    for index, check in enumerate(checks, start=1):
+        lines.append(_found_variant_line(check, index))
+        if check.yandex_travel_url:
+            lines.append(f"   🔗 <a href='{check.yandex_travel_url}'>Яндекс</a>")
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 async def send_route(message: Message, route_id: int, prefix: str = "📊 <b>Результат ручной проверки</b>"):
@@ -895,6 +928,27 @@ def register_handlers(dp: Dispatcher):
     @dp.callback_query(F.data.startswith("check:"))
     async def cb_check(callback):
         rid = int(callback.data.split(":", 1)[1]); await callback.answer("Проверка запущена"); asyncio.create_task(check_and_send_route(callback.message, rid))
+
+    @dp.callback_query(F.data.startswith("found:"))
+    async def cb_found(callback):
+        rid = int(callback.data.split(":", 1)[1])
+        db = SessionLocal()
+        try:
+            route = owned_route(db, callback.message, rid)
+            if not route:
+                await callback.answer("Мониторинг не найден", show_alert=True)
+                return
+            checks = (
+                db.query(PriceCheck)
+                .filter(PriceCheck.tracked_route_id == rid)
+                .order_by(PriceCheck.checked_at.desc(), PriceCheck.id.desc())
+                .limit(10)
+                .all()
+            )
+            await callback.answer()
+            await callback.message.answer(found_variants_text(route, checks), parse_mode="HTML", reply_markup=route_actions(route, callback.message))
+        finally:
+            db.close()
 
     @dp.callback_query(F.data.startswith("stop:"))
     async def cb_stop(callback):
