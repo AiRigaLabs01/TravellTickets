@@ -239,6 +239,14 @@ TIME_WINDOW_PRESETS = {
 }
 
 
+TIME_WINDOW_ROWS = [
+    ["Без ограничения"],
+    ["Утро 06:00-12:00", "День 12:00-18:00"],
+    ["Вечер 18:00-23:00", "Ночь 00:00-05:00"],
+    ["Вечер-ночь 18:00-05:00"],
+]
+
+
 def parse_time_window(text: str | None) -> tuple[str | None, str | None] | None:
     raw = (text or "").strip().lower().replace("—", "-").replace("–", "-")
     if raw in TIME_WINDOW_PRESETS:
@@ -391,7 +399,7 @@ async def update_route(message: Message, route_id: int, reset: bool = False, **f
 
 
 class NewRouteStates(StatesGroup):
-    origin = State(); destination = State(); trip_type = State(); departure_date = State(); return_date = State(); passengers = State(); baggage = State(); max_price = State(); interval = State(); direct_only = State(); time_window = State()
+    origin = State(); destination = State(); trip_type = State(); departure_date = State(); return_date = State(); passengers = State(); baggage = State(); max_price = State(); interval = State(); direct_only = State(); time_window = State(); return_time_window = State()
 
 
 class EditRouteStates(StatesGroup):
@@ -439,7 +447,7 @@ def register_handlers(dp: Dispatcher):
     @dp.message(F.text == "➕ Новый мониторинг")
     async def new_route(message: Message, state: FSMContext):
         await state.set_state(NewRouteStates.origin)
-        await message.answer("Введите город или код аэропорта вылета. Например: <b>Екатеринбург</b>, <b>Екат</b> или <b>SVX</b>", parse_mode="HTML", reply_markup=kb([]))
+        await message.answer("Введите город или код аэропорта вылета. Например: <b>Москва</b>, <b>Моск</b> или <b>MOW</b>", parse_mode="HTML", reply_markup=kb([]))
 
     @dp.message(NewRouteStates.origin)
     async def new_origin(message: Message, state: FSMContext):
@@ -453,7 +461,7 @@ def register_handlers(dp: Dispatcher):
         await state.update_data(origin=selected.code, origin_airports=selected.airport_code)
         await state.set_state(NewRouteStates.destination)
         await message.answer(
-            f"Выбрано: <b>{city_label(selected.code)} / {selected.code}</b>\n\nВведите город или код назначения. Например: <b>Москва</b>, <b>Моск</b> или <b>MOW</b>",
+            f"Выбрано: <b>{city_label(selected.code)} / {selected.code}</b>\n\nВведите город или код назначения. Например: <b>Екатеринбург</b>, <b>Екат</b> или <b>SVX</b>",
             parse_mode="HTML",
             reply_markup=kb([]),
         )
@@ -628,16 +636,11 @@ def register_handlers(dp: Dispatcher):
         await state.update_data(direct_only=direct)
         await state.set_state(NewRouteStates.time_window)
         await message.answer(
-            "Когда искать вылет?\n\n"
+            "Когда искать вылет туда?\n\n"
             "Строго по дате: выберите обычный диапазон, например <b>00:00-05:00</b>.\n"
             "Гибко через полночь: выберите <b>Вечер-ночь 18:00-05:00</b> или введите свой диапазон.",
             parse_mode="HTML",
-            reply_markup=kb([
-                ["Без ограничения"],
-                ["Утро 06:00-12:00", "День 12:00-18:00"],
-                ["Вечер 18:00-23:00", "Ночь 00:00-05:00"],
-                ["Вечер-ночь 18:00-05:00"],
-            ]),
+            reply_markup=kb(TIME_WINDOW_ROWS),
         )
 
     @dp.message(NewRouteStates.time_window)
@@ -647,21 +650,49 @@ def register_handlers(dp: Dispatcher):
             await message.answer(
                 "Выберите вариант кнопкой или введите диапазон как <b>18:00-05:00</b>.",
                 parse_mode="HTML",
-                reply_markup=kb([
-                    ["Без ограничения"],
-                    ["Утро 06:00-12:00", "День 12:00-18:00"],
-                    ["Вечер 18:00-23:00", "Ночь 00:00-05:00"],
-                    ["Вечер-ночь 18:00-05:00"],
-                ]),
+                reply_markup=kb(TIME_WINDOW_ROWS),
             )
             return
         departure_time_from, departure_time_to = time_window
+        await state.update_data(departure_time_from=departure_time_from, departure_time_to=departure_time_to)
+        data = await state.get_data()
+        if data.get("trip_type") == "roundtrip":
+            await state.set_state(NewRouteStates.return_time_window)
+            await message.answer(
+                "Когда искать обратный вылет?\n\n"
+                "Можно выбрать отдельное окно для обратного плеча. "
+                "Например, <b>Ночь 00:00-05:00</b> строго по дате возврата или "
+                "<b>Вечер-ночь 18:00-05:00</b> с переходом на следующее утро.",
+                parse_mode="HTML",
+                reply_markup=kb(TIME_WINDOW_ROWS),
+            )
+            return
+        await create_new_route(message, state)
+
+    @dp.message(NewRouteStates.return_time_window)
+    async def new_return_time_window(message: Message, state: FSMContext):
+        time_window = parse_time_window(message.text)
+        if time_window is None:
+            await message.answer(
+                "Выберите вариант кнопкой или введите диапазон как <b>18:00-05:00</b>.",
+                parse_mode="HTML",
+                reply_markup=kb(TIME_WINDOW_ROWS),
+            )
+            return
+        return_departure_time_from, return_departure_time_to = time_window
+        await state.update_data(
+            return_departure_time_from=return_departure_time_from,
+            return_departure_time_to=return_departure_time_to,
+        )
+        await create_new_route(message, state)
+
+    async def create_new_route(message: Message, state: FSMContext):
         data = await state.get_data()
         await state.clear()
         await message.answer("⏳ <b>Мониторинг создан. Проверяю текущие цены...</b>", parse_mode="HTML", reply_markup=main_menu())
         db = SessionLocal()
         try:
-            r = TrackedRoute(origin=data["origin"], destination=data["destination"], origin_airports=data.get("origin_airports"), destination_airports=data.get("destination_airports"), departure_date=data["departure_date"], return_date=data.get("return_date"), trip_type=data.get("trip_type", "oneway"), adult_seats=data.get("adult_seats", 1), children_seats=data.get("children_seats", 0), infant_seats=data.get("infant_seats", 0), baggage_required=data.get("baggage_required", False), max_price=data["max_price"], interval_minutes=data["interval_minutes"], direct_only=data.get("direct_only", False), departure_time_from=departure_time_from, departure_time_to=departure_time_to, telegram_chat_id=chat_id(message), creator_source="telegram", creator_display_name=creator_name(message), creator_username=creator_username(message), creator_telegram_user_id=creator_user_id(message), title=f"{city_label(data['origin'])} → {city_label(data['destination'])} {format_route_date(data['departure_date'])}")
+            r = TrackedRoute(origin=data["origin"], destination=data["destination"], origin_airports=data.get("origin_airports"), destination_airports=data.get("destination_airports"), departure_date=data["departure_date"], return_date=data.get("return_date"), trip_type=data.get("trip_type", "oneway"), adult_seats=data.get("adult_seats", 1), children_seats=data.get("children_seats", 0), infant_seats=data.get("infant_seats", 0), baggage_required=data.get("baggage_required", False), max_price=data["max_price"], interval_minutes=data["interval_minutes"], direct_only=data.get("direct_only", False), departure_time_from=data.get("departure_time_from"), departure_time_to=data.get("departure_time_to"), return_departure_time_from=data.get("return_departure_time_from"), return_departure_time_to=data.get("return_departure_time_to"), telegram_chat_id=chat_id(message), creator_source="telegram", creator_display_name=creator_name(message), creator_username=creator_username(message), creator_telegram_user_id=creator_user_id(message), title=f"{city_label(data['origin'])} → {city_label(data['destination'])} {format_route_date(data['departure_date'])}")
             db.add(r); db.commit(); db.refresh(r); route_id = r.id; schedule_route(r)
         finally:
             db.close()
@@ -704,7 +735,7 @@ def register_handlers(dp: Dispatcher):
 
     @dp.callback_query(F.data.startswith("edit_origin:"))
     async def cb_edit_origin(callback, state: FSMContext):
-        await ask_edit(callback, state, int(callback.data.split(":", 1)[1]), EditRouteStates.origin, "Введите новый город/аэропорт вылета. Например: <b>Екатеринбург</b>, <b>Екат</b> или <b>SVX</b>")
+        await ask_edit(callback, state, int(callback.data.split(":", 1)[1]), EditRouteStates.origin, "Введите новый город/аэропорт вылета. Например: <b>Москва</b>, <b>Моск</b> или <b>MOW</b>")
 
     @dp.message(EditRouteStates.origin)
     async def edit_origin(message: Message, state: FSMContext):
@@ -719,7 +750,7 @@ def register_handlers(dp: Dispatcher):
 
     @dp.callback_query(F.data.startswith("edit_destination:"))
     async def cb_edit_destination(callback, state: FSMContext):
-        await ask_edit(callback, state, int(callback.data.split(":", 1)[1]), EditRouteStates.destination, "Введите новый город/аэропорт назначения. Например: <b>Москва</b>, <b>Моск</b> или <b>MOW</b>")
+        await ask_edit(callback, state, int(callback.data.split(":", 1)[1]), EditRouteStates.destination, "Введите новый город/аэропорт назначения. Например: <b>Екатеринбург</b>, <b>Екат</b> или <b>SVX</b>")
 
     @dp.message(EditRouteStates.destination)
     async def edit_destination(message: Message, state: FSMContext):
