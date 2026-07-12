@@ -380,13 +380,15 @@ def found_variants_text(route: TrackedRoute, checks: list[PriceCheck]) -> str:
     return "\n".join(lines).rstrip()
 
 
-async def send_route(message: Message, route_id: int, prefix: str = "📊 <b>Результат ручной проверки</b>"):
+async def send_route(message: Message, route_id: int, prefix: str = "📊 <b>Результат ручной проверки</b>", restore_main_menu: bool = False):
     db = SessionLocal()
     try:
         r = owned_route(db, message, route_id)
         if not r:
             return
         last = db.query(PriceCheck).filter(PriceCheck.tracked_route_id == route_id).order_by(PriceCheck.checked_at.desc()).first()
+        if restore_main_menu:
+            await message.answer("✅ Готово. Главное меню снова доступно ниже.", reply_markup=main_menu())
         await message.answer(f"{prefix}\n\n" + route_card(r, last), parse_mode="HTML", reply_markup=route_actions(r, message))
     finally:
         db.close()
@@ -395,7 +397,7 @@ async def send_route(message: Message, route_id: int, prefix: str = "📊 <b>Р�
 async def check_and_send_route(message: Message, route_id: int, prefix: str | None = None) -> None:
     try:
         await check_route(route_id)
-        await send_route(message, route_id, prefix or "Результат ручной проверки")
+        await send_route(message, route_id, prefix or "Результат ручной проверки", restore_main_menu=True)
     except Exception:
         logger.exception("Manual route check failed")
         await message.answer("Не удалось проверить цены. Попробуйте ещё раз.", reply_markup=main_menu())
