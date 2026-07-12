@@ -18,7 +18,7 @@ from app.telegram_notifier import (
     build_notification_text,
     send_telegram_notification,
 )
-from app.travelpayouts_client import TravelpayoutsError, search_prices, search_prices_for_leg
+from app.travelpayouts_client import TravelpayoutsError, search_prices
 from app.yandex_links import build_yandex_travel_url_for_route
 
 logger = logging.getLogger(__name__)
@@ -185,7 +185,7 @@ async def _check_roundtrip(route: TrackedRoute, db: Session):
     yandex_url = build_yandex_travel_url_for_route(route)
     return_route = _return_leg_route(route)
     outbound_flights = await search_prices(route)
-    return_flights = await search_prices_for_leg(route.destination, route.origin, route.return_date, route.direct_only)
+    return_flights = await search_prices(return_route)
     outbound = apply_filters(outbound_flights, route, enforce_price=False)
     inbound = apply_filters(return_flights, return_route, enforce_price=False)
     best = _best_roundtrip(outbound, inbound, yandex_url)

@@ -104,9 +104,44 @@ async def search_prices_for_leg(origin: str, destination: str, departure_date: s
     return [_normalize_flight(item) for item in data.get("data", [])]
 
 
+def _time_total(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        hour, minute = value.split(":", 1)
+        return int(hour) * 60 + int(minute)
+    except (ValueError, TypeError):
+        return None
+
+
+def _departure_window_crosses_midnight(route: Any) -> bool:
+    from_total = _time_total(getattr(route, "departure_time_from", None))
+    to_total = _time_total(getattr(route, "departure_time_to", None))
+    return from_total is not None and to_total is not None and from_total > to_total
+
+
 async def search_prices(route: Any) -> list[dict]:
     """
     Search prices via Travelpayouts Aviasales API.
     Returns list of normalized flight dicts.
     """
-    return await search_prices_for_leg(route.origin, route.destination, route.departure_date, route.direct_only)
+    dates = [route.departure_date]
+    if _departure_window_crosses_midnight(route):
+        next_date = datetime.fromisoformat(route.departure_date).date() + timedelta(days=1)
+        dates.append(next_date.isoformat())
+
+    flights: list[dict] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for departure_date in dates:
+        for flight in await search_prices_for_leg(route.origin, route.destination, departure_date, route.direct_only):
+            key = (
+                flight.get("airline", ""),
+                flight.get("flight_number", ""),
+                flight.get("departure_at_raw", ""),
+                flight.get("origin_airport", ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            flights.append(flight)
+    return flights

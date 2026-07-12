@@ -56,7 +56,7 @@ def test_city_label_uses_airports_data_for_new_codes() -> None:
 def test_telegram_calendar_keyboard_offers_clickable_dates() -> None:
     from datetime import date
 
-    from app.telegram_bot import MANUAL_DATE_BUTTON, calendar_keyboard
+    from app.telegram_bot import CANCEL_BUTTON, MANUAL_DATE_BUTTON, calendar_keyboard
 
     markup = calendar_keyboard(min_date=date(2026, 7, 11))
     buttons = [button for row in markup.inline_keyboard for button in row]
@@ -67,8 +67,10 @@ def test_telegram_calendar_keyboard_offers_clickable_dates() -> None:
     assert "11" in texts
     assert "18" in texts
     assert MANUAL_DATE_BUTTON in texts
+    assert CANCEL_BUTTON in texts
     assert "cal:pick:2026-07-11" in callbacks
     assert "cal:nav:2026-08-01" in callbacks
+    assert "flow:cancel" in callbacks
 
 
 def test_telegram_edit_menu_has_return_date_only_for_roundtrip() -> None:
@@ -89,3 +91,13 @@ def test_telegram_edit_menu_has_return_date_only_for_roundtrip() -> None:
     assert "edit_return_date:10" not in oneway_callbacks
     assert "edit_date:10" in roundtrip_callbacks
     assert "edit_return_date:10" in roundtrip_callbacks
+
+
+def test_telegram_time_window_parser_supports_strict_and_flexible_windows() -> None:
+    from app.telegram_bot import parse_time_window
+
+    assert parse_time_window("Вечер-ночь 18:00-05:00") == ("18:00", "05:00")
+    assert parse_time_window("00:00-05:00") == ("00:00", "05:00")
+    assert parse_time_window("23:00 — 05:00") == ("23:00", "05:00")
+    assert parse_time_window("Без ограничения") == (None, None)
+    assert parse_time_window("25:00-05:00") is None

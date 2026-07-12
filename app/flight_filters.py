@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 
@@ -13,7 +13,16 @@ def _parse_time(time_str: str | None) -> tuple[int, int] | None:
         return None
 
 
-def _time_in_range(dt: datetime | None, from_str: str | None, to_str: str | None) -> bool:
+def _parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _time_in_range(dt: datetime | None, from_str: str | None, to_str: str | None, base_date: str | None = None) -> bool:
     if dt is None:
         return True
     from_t = _parse_time(from_str)
@@ -24,12 +33,27 @@ def _time_in_range(dt: datetime | None, from_str: str | None, to_str: str | None
     total = h * 60 + m
     if from_t is not None:
         from_total = from_t[0] * 60 + from_t[1]
-        if total < from_total:
-            return False
+    else:
+        from_total = None
     if to_t is not None:
         to_total = to_t[0] * 60 + to_t[1]
-        if total > to_total:
+    else:
+        to_total = None
+
+    if from_total is not None and to_total is not None and from_total > to_total:
+        date_value = _parse_date(base_date)
+        if date_value:
+            if dt.date() == date_value:
+                return total >= from_total
+            if dt.date() == date_value + timedelta(days=1):
+                return total <= to_total
             return False
+        return total >= from_total or total <= to_total
+
+    if from_total is not None and total < from_total:
+        return False
+    if to_total is not None and total > to_total:
+        return False
     return True
 
 
@@ -67,11 +91,11 @@ def apply_filters(flights: list[dict], route: Any, *, enforce_price: bool = True
             continue
 
         # Departure time range
-        if not _time_in_range(f["departure_at"], route.departure_time_from, route.departure_time_to):
+        if not _time_in_range(f["departure_at"], route.departure_time_from, route.departure_time_to, route.departure_date):
             continue
 
         # Arrival time range (estimated)
-        if not _time_in_range(f["estimated_arrival_at"], route.arrival_time_from, route.arrival_time_to):
+        if not _time_in_range(f["estimated_arrival_at"], route.arrival_time_from, route.arrival_time_to, route.departure_date):
             continue
 
         results.append(f)

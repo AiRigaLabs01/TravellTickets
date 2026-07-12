@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -27,6 +27,7 @@ from app.yandex_links import build_yandex_travel_url_for_route
 
 logger = logging.getLogger(__name__)
 CREATE_MONITORING_BUTTON = "➕ Создать мониторинг"
+CANCEL_BUTTON = "❌ Отмена"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -40,8 +41,11 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
-def kb(rows: list[list[str]]) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=x) for x in r] for r in rows], resize_keyboard=True, one_time_keyboard=True)
+def kb(rows: list[list[str]], include_cancel: bool = True) -> ReplyKeyboardMarkup:
+    keyboard = [[KeyboardButton(text=x) for x in r] for r in rows]
+    if include_cancel and all(CANCEL_BUTTON not in row for row in rows):
+        keyboard.append([KeyboardButton(text=CANCEL_BUTTON)])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True, one_time_keyboard=True)
 
 
 MANUAL_DATE_BUTTON = "Ввести дату вручную"
@@ -91,6 +95,7 @@ def calendar_keyboard(month: date | None = None, min_date: date | None = None) -
             row.append(InlineKeyboardButton(text=str(day), callback_data=callback_data))
         rows.append(row)
     rows.append([InlineKeyboardButton(text=MANUAL_DATE_BUTTON, callback_data="cal:manual")])
+    rows.append([InlineKeyboardButton(text=CANCEL_BUTTON, callback_data="flow:cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -224,6 +229,39 @@ def parse_interval(text: str | None) -> int | None:
     return value
 
 
+TIME_WINDOW_PRESETS = {
+    "без ограничения": (None, None),
+    "утро 06:00-12:00": ("06:00", "12:00"),
+    "день 12:00-18:00": ("12:00", "18:00"),
+    "вечер 18:00-23:00": ("18:00", "23:00"),
+    "ночь 00:00-05:00": ("00:00", "05:00"),
+    "вечер-ночь 18:00-05:00": ("18:00", "05:00"),
+}
+
+
+def parse_time_window(text: str | None) -> tuple[str | None, str | None] | None:
+    raw = (text or "").strip().lower().replace("—", "-").replace("–", "-")
+    if raw in TIME_WINDOW_PRESETS:
+        return TIME_WINDOW_PRESETS[raw]
+    parts = [part.strip() for part in raw.split("-", 1)]
+    if len(parts) != 2:
+        return None
+    result = []
+    for part in parts:
+        pieces = part.split(":", 1)
+        if len(pieces) != 2:
+            return None
+        try:
+            hour = int(pieces[0])
+            minute = int(pieces[1])
+        except ValueError:
+            return None
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            return None
+        result.append(f"{hour:02d}:{minute:02d}")
+    return result[0], result[1]
+
+
 def parse_passengers(text: str) -> tuple[int, int, int] | None:
     t = (text or "").strip().lower()
     presets = {
@@ -353,7 +391,7 @@ async def update_route(message: Message, route_id: int, reset: bool = False, **f
 
 
 class NewRouteStates(StatesGroup):
-    origin = State(); destination = State(); trip_type = State(); departure_date = State(); return_date = State(); passengers = State(); baggage = State(); max_price = State(); interval = State(); direct_only = State()
+    origin = State(); destination = State(); trip_type = State(); departure_date = State(); return_date = State(); passengers = State(); baggage = State(); max_price = State(); interval = State(); direct_only = State(); time_window = State()
 
 
 class EditRouteStates(StatesGroup):
@@ -381,12 +419,27 @@ def register_handlers(dp: Dispatcher):
     async def help_msg(message: Message):
         await message.answer("📖 <b>Справка</b>\n\n➕ Создать мониторинг — добавить маршрут и условия поиска\n📋 Мои мониторинги — список только ваших активных мониторингов\n🔎 Проверить сейчас — проверить только ваши мониторинги вручную", parse_mode="HTML", reply_markup=main_menu())
 
+    @dp.message(StateFilter("*"), Command("cancel"))
+    @dp.message(StateFilter("*"), F.text.in_({CANCEL_BUTTON, "Отмена", "отмена", "cancel", "Cancel"}))
+    async def cancel_flow(message: Message, state: FSMContext):
+        if await state.get_state() is None:
+            await message.answer("Сейчас нечего отменять.", reply_markup=main_menu())
+            return
+        await state.clear()
+        await message.answer("Действие отменено.", reply_markup=main_menu())
+
+    @dp.callback_query(F.data == "flow:cancel")
+    async def cancel_callback(callback, state: FSMContext):
+        await state.clear()
+        await callback.answer("Отменено")
+        await callback.message.answer("Действие отменено.", reply_markup=main_menu())
+
     @dp.message(Command("new"))
     @dp.message(F.text == CREATE_MONITORING_BUTTON)
     @dp.message(F.text == "➕ Новый мониторинг")
     async def new_route(message: Message, state: FSMContext):
         await state.set_state(NewRouteStates.origin)
-        await message.answer("Введите город или код аэропорта вылета. Например: <b>Екатеринбург</b>, <b>Екат</b> или <b>SVX</b>", parse_mode="HTML")
+        await message.answer("Введите город или код аэропорта вылета. Например: <b>Екатеринбург</b>, <b>Екат</b> или <b>SVX</b>", parse_mode="HTML", reply_markup=kb([]))
 
     @dp.message(NewRouteStates.origin)
     async def new_origin(message: Message, state: FSMContext):
@@ -399,7 +452,11 @@ def register_handlers(dp: Dispatcher):
             return
         await state.update_data(origin=selected.code, origin_airports=selected.airport_code)
         await state.set_state(NewRouteStates.destination)
-        await message.answer(f"Выбрано: <b>{city_label(selected.code)} / {selected.code}</b>\n\nВведите город или код назначения. Например: <b>Москва</b>, <b>Моск</b> или <b>MOW</b>", parse_mode="HTML")
+        await message.answer(
+            f"Выбрано: <b>{city_label(selected.code)} / {selected.code}</b>\n\nВведите город или код назначения. Например: <b>Москва</b>, <b>Моск</b> или <b>MOW</b>",
+            parse_mode="HTML",
+            reply_markup=kb([]),
+        )
 
     @dp.message(NewRouteStates.destination)
     async def new_destination(message: Message, state: FSMContext):
@@ -443,7 +500,7 @@ def register_handlers(dp: Dispatcher):
     @dp.message(NewRouteStates.return_date)
     async def new_return_date(message: Message, state: FSMContext):
         if (message.text or "").strip() == MANUAL_DATE_BUTTON:
-            await message.answer("Введите дату обратного вылета: <b>28.06.2026</b> или <b>2026-06-28</b>", parse_mode="HTML")
+            await message.answer("Введите дату обратного вылета: <b>28.06.2026</b> или <b>2026-06-28</b>", parse_mode="HTML", reply_markup=kb([]))
             return
         d = parse_route_date(message.text)
         if not d:
@@ -477,7 +534,7 @@ def register_handlers(dp: Dispatcher):
             return
         if action == "manual":
             await callback.answer()
-            await callback.message.answer("Введите дату вручную: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML")
+            await callback.message.answer("Введите дату вручную: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML", reply_markup=kb([]))
             return
         if action != "pick":
             await callback.answer()
@@ -542,7 +599,7 @@ def register_handlers(dp: Dispatcher):
     async def new_baggage(message: Message, state: FSMContext):
         await state.update_data(baggage_required=(message.text or "").lower().strip() in ("нужен багаж", "багаж", "да", "yes", "1", "true"))
         await state.set_state(NewRouteStates.max_price)
-        await message.answer("Максимальная цена (₽), например: <b>5000</b>:", parse_mode="HTML")
+        await message.answer("Максимальная цена (₽), например: <b>5000</b>:", parse_mode="HTML", reply_markup=kb([]))
 
     @dp.message(NewRouteStates.max_price)
     async def new_price(message: Message, state: FSMContext):
@@ -553,7 +610,7 @@ def register_handlers(dp: Dispatcher):
             return
         await state.update_data(max_price=price)
         await state.set_state(NewRouteStates.interval)
-        await message.answer("Введите интервал проверки в минутах от <b>5</b> до <b>15</b>. Можно указать любое число в этом диапазоне.", parse_mode="HTML")
+        await message.answer("Введите интервал проверки в минутах от <b>5</b> до <b>15</b>. Можно указать любое число в этом диапазоне.", parse_mode="HTML", reply_markup=kb([]))
 
     @dp.message(NewRouteStates.interval)
     async def new_interval(message: Message, state: FSMContext):
@@ -568,12 +625,43 @@ def register_handlers(dp: Dispatcher):
     @dp.message(NewRouteStates.direct_only)
     async def new_direct(message: Message, state: FSMContext):
         direct = message.text.strip().lower() in ("да", "yes", "y", "д", "1", "true")
+        await state.update_data(direct_only=direct)
+        await state.set_state(NewRouteStates.time_window)
+        await message.answer(
+            "Когда искать вылет?\n\n"
+            "Строго по дате: выберите обычный диапазон, например <b>00:00-05:00</b>.\n"
+            "Гибко через полночь: выберите <b>Вечер-ночь 18:00-05:00</b> или введите свой диапазон.",
+            parse_mode="HTML",
+            reply_markup=kb([
+                ["Без ограничения"],
+                ["Утро 06:00-12:00", "День 12:00-18:00"],
+                ["Вечер 18:00-23:00", "Ночь 00:00-05:00"],
+                ["Вечер-ночь 18:00-05:00"],
+            ]),
+        )
+
+    @dp.message(NewRouteStates.time_window)
+    async def new_time_window(message: Message, state: FSMContext):
+        time_window = parse_time_window(message.text)
+        if time_window is None:
+            await message.answer(
+                "Выберите вариант кнопкой или введите диапазон как <b>18:00-05:00</b>.",
+                parse_mode="HTML",
+                reply_markup=kb([
+                    ["Без ограничения"],
+                    ["Утро 06:00-12:00", "День 12:00-18:00"],
+                    ["Вечер 18:00-23:00", "Ночь 00:00-05:00"],
+                    ["Вечер-ночь 18:00-05:00"],
+                ]),
+            )
+            return
+        departure_time_from, departure_time_to = time_window
         data = await state.get_data()
         await state.clear()
         await message.answer("⏳ <b>Мониторинг создан. Проверяю текущие цены...</b>", parse_mode="HTML", reply_markup=main_menu())
         db = SessionLocal()
         try:
-            r = TrackedRoute(origin=data["origin"], destination=data["destination"], origin_airports=data.get("origin_airports"), destination_airports=data.get("destination_airports"), departure_date=data["departure_date"], return_date=data.get("return_date"), trip_type=data.get("trip_type", "oneway"), adult_seats=data.get("adult_seats", 1), children_seats=data.get("children_seats", 0), infant_seats=data.get("infant_seats", 0), baggage_required=data.get("baggage_required", False), max_price=data["max_price"], interval_minutes=data["interval_minutes"], direct_only=direct, telegram_chat_id=chat_id(message), creator_source="telegram", creator_display_name=creator_name(message), creator_username=creator_username(message), creator_telegram_user_id=creator_user_id(message), title=f"{city_label(data['origin'])} → {city_label(data['destination'])} {format_route_date(data['departure_date'])}")
+            r = TrackedRoute(origin=data["origin"], destination=data["destination"], origin_airports=data.get("origin_airports"), destination_airports=data.get("destination_airports"), departure_date=data["departure_date"], return_date=data.get("return_date"), trip_type=data.get("trip_type", "oneway"), adult_seats=data.get("adult_seats", 1), children_seats=data.get("children_seats", 0), infant_seats=data.get("infant_seats", 0), baggage_required=data.get("baggage_required", False), max_price=data["max_price"], interval_minutes=data["interval_minutes"], direct_only=data.get("direct_only", False), departure_time_from=departure_time_from, departure_time_to=departure_time_to, telegram_chat_id=chat_id(message), creator_source="telegram", creator_display_name=creator_name(message), creator_username=creator_username(message), creator_telegram_user_id=creator_user_id(message), title=f"{city_label(data['origin'])} → {city_label(data['destination'])} {format_route_date(data['departure_date'])}")
             db.add(r); db.commit(); db.refresh(r); route_id = r.id; schedule_route(r)
         finally:
             db.close()
@@ -612,7 +700,7 @@ def register_handlers(dp: Dispatcher):
         await callback.message.answer("✏️ Что изменить в мониторинге?", reply_markup=edit_menu(route_id, include_return_date))
 
     async def ask_edit(callback, state, route_id: int, st, text: str):
-        await state.update_data(edit_route_id=route_id); await state.set_state(st); await callback.answer(); await callback.message.answer(text, parse_mode="HTML")
+        await state.update_data(edit_route_id=route_id); await state.set_state(st); await callback.answer(); await callback.message.answer(text, parse_mode="HTML", reply_markup=kb([]))
 
     @dp.callback_query(F.data.startswith("edit_origin:"))
     async def cb_edit_origin(callback, state: FSMContext):
@@ -672,7 +760,7 @@ def register_handlers(dp: Dispatcher):
     @dp.message(EditRouteStates.date)
     async def edit_date(message: Message, state: FSMContext):
         if (message.text or "").strip() == MANUAL_DATE_BUTTON:
-            await message.answer("Введите новую дату вылета: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML")
+            await message.answer("Введите новую дату вылета: <b>21.06.2026</b> или <b>2026-06-21</b>", parse_mode="HTML", reply_markup=kb([]))
             return
         d = parse_route_date(message.text)
         if not d:
@@ -705,7 +793,7 @@ def register_handlers(dp: Dispatcher):
         data = await state.get_data()
         min_allowed = _calendar_min_date(EditRouteStates.return_date.state, data)
         if (message.text or "").strip() == MANUAL_DATE_BUTTON:
-            await message.answer("Введите новую дату обратного вылета: <b>28.06.2026</b> или <b>2026-06-28</b>", parse_mode="HTML")
+            await message.answer("Введите новую дату обратного вылета: <b>28.06.2026</b> или <b>2026-06-28</b>", parse_mode="HTML", reply_markup=kb([]))
             return
         d = parse_route_date(message.text)
         if not d:
