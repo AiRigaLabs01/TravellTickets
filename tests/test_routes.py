@@ -156,6 +156,12 @@ def test_check_oneway_stores_found_variants_outside_filters(monkeypatch) -> None
             ]
 
         monkeypatch.setattr(scheduler, "search_prices", fake_search_prices)
+        monkeypatch.setattr(scheduler, "_should_notify", lambda *_args: False)
+
+        async def skip_partner_links(_flights: list[dict]) -> None:
+            return None
+
+        monkeypatch.setattr(scheduler, "_add_website_partner_links", skip_partner_links)
 
         flights_count, filtered_count, _best, _sent = asyncio.run(scheduler._check_oneway(route, db))
         db.commit()

@@ -88,7 +88,8 @@
         <span>✈ {{ last.departure_at | fmt_time }}</span>
         <span>🛬 {{ last.estimated_arrival_at | fmt_time }}{% if last.is_estimated_arrival %}&nbsp;<span style="color:var(--muted)" title="Рассчитано по длительности рейса">~</span>{% endif %}</span>
         {% if last.gate %}<span>🏪 {{ last.gate }}</span>{% endif %}
-        {% if last.yandex_travel_url %}<span><a href="{{ last.yandex_travel_url }}" target="_blank">🔗 Яндекс</a></span>{% endif %}
+        {% if last.aviasales_url %}<span><a href="{{ last.aviasales_url }}" target="_blank" rel="sponsored noopener">✈️ Aviasales</a></span>{% endif %}
+        {% if last.yandex_travel_url %}<span><a href="{{ last.yandex_travel_url }}" target="_blank" rel="noopener">🔗 Яндекс</a></span>{% endif %}
       </div>
     {% endif %}
     <div class="action-row" style="margin-top:16px">

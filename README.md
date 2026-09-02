@@ -35,6 +35,9 @@
 | Переменная | Описание |
 |---|---|
 | `TRAVELPAYOUTS_TOKEN` | API-токен Travelpayouts (обязательно) |
+| `TRAVELPAYOUTS_MARKER` | Partner ID Travelpayouts для атрибуции бронирований |
+| `TRAVELPAYOUTS_WEBSITE_PROJECT_ID` | ID проекта Travelpayouts для сайта |
+| `TRAVELPAYOUTS_TELEGRAM_PROJECT_ID` | ID проекта Travelpayouts для Telegram |
 | `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота (для уведомлений) |
 | `TELEGRAM_CHAT_ID` | Ваш Telegram chat_id (по умолчанию) |
 | `APP_BASE_URL` | Публичный URL приложения (для ссылок в боте) |

@@ -57,6 +57,8 @@
       <span>✈ {{ last.departure_at | fmt_time }}</span>
       <span>🛬 {{ last.estimated_arrival_at | fmt_time }}</span>
       <span>🏷 {{ last.gate or '—' }}</span>
+      {% if last.aviasales_url %}<span><a href="{{ last.aviasales_url }}" target="_blank" rel="sponsored noopener">✈️ Aviasales</a></span>{% endif %}
+      {% if last.yandex_travel_url %}<span><a href="{{ last.yandex_travel_url }}" target="_blank" rel="noopener">🔗 Яндекс</a></span>{% endif %}
     </div>
     {% endif %}
   </div>

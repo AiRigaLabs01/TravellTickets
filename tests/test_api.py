@@ -79,3 +79,10 @@ def test_route_form_uses_external_script_without_inline_handlers() -> None:
     assert "onclick=" not in html
     assert "onchange=" not in html
     assert "onsubmit=" not in html
+
+
+def test_ticket_templates_include_aviasales_links() -> None:
+    for name in ("index.html", "route_detail.html", "tg_monitorings.html", "tg_route_detail.html"):
+        html = Path("app/templates", name).read_text(encoding="utf-8")
+        assert "aviasales_url" in html
+        assert "Aviasales" in html

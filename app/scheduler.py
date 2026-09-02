@@ -8,10 +8,16 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.config import DEBUG_MONITORING_MESSAGES, TELEGRAM_CHAT_ID
+from app.config import (
+    DEBUG_MONITORING_MESSAGES,
+    TELEGRAM_CHAT_ID,
+    TRAVELPAYOUTS_TELEGRAM_PROJECT_ID,
+    TRAVELPAYOUTS_WEBSITE_PROJECT_ID,
+)
 from app.database import SessionLocal
 from app.flight_filters import apply_filters
 from app.models import Notification, PriceCheck, TrackedRoute, WebUser
+from app.partner_links import create_partner_link, create_partner_links
 from app.telegram_notifier import (
     build_debug_monitoring_text,
     build_no_changes_text,
@@ -25,6 +31,27 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 NO_CHANGE_NOTIFY_EVERY = 3
 MAX_STORED_FOUND_VARIANTS = 10
+
+
+async def _add_website_partner_links(flights: list[dict]) -> None:
+    candidates = [flight for flight in flights if flight.get("aviasales_url")]
+    links = await create_partner_links(
+        [flight["aviasales_url"] for flight in candidates],
+        TRAVELPAYOUTS_WEBSITE_PROJECT_ID,
+        "website_results",
+    )
+    for flight, link in zip(candidates, links):
+        flight["website_aviasales_url"] = link
+
+
+async def _add_telegram_partner_link(flight: dict | None, sub_id: str) -> None:
+    if not flight or flight.get("telegram_aviasales_url"):
+        return
+    flight["telegram_aviasales_url"] = await create_partner_link(
+        flight.get("aviasales_url"),
+        TRAVELPAYOUTS_TELEGRAM_PROJECT_ID,
+        sub_id,
+    )
 
 
 def _find_chat_id_by_username(db: Session, username: str | None) -> str | None:
@@ -105,7 +132,7 @@ def _make_price_check(route: TrackedRoute, flight: dict, yandex_url: str, matche
         is_estimated_arrival=flight.get("is_estimated_arrival", True),
         transfers=flight.get("transfers", 0),
         link=flight.get("link"),
-        aviasales_url=flight.get("aviasales_url"),
+        aviasales_url=flight.get("website_aviasales_url") or flight.get("aviasales_url"),
         yandex_travel_url=yandex_url,
         raw_json=json.dumps(flight.get("raw_json", {}), default=str),
     )
@@ -175,6 +202,7 @@ def _roundtrip_flight(outbound: dict, inbound: dict, yandex_url: str) -> dict:
         "transfers": (outbound.get("transfers") or 0) + (inbound.get("transfers") or 0),
         "link": outbound.get("link"),
         "aviasales_url": outbound.get("aviasales_url"),
+        "website_aviasales_url": outbound.get("website_aviasales_url"),
         "yandex_travel_url": yandex_url,
         "return_flight": inbound,
         "raw_json": {"trip_type": "roundtrip", "outbound": outbound, "return": inbound},
@@ -229,11 +257,13 @@ async def _send_debug_message(route: TrackedRoute, db: Session, flights_count: i
         return
     if not _notification_chat_ids(route, db):
         return
+    await _add_telegram_partner_link(best_flight, "telegram_debug")
     text = build_debug_monitoring_text(route, flights_count, filtered_count, best_flight, error)
     await _send_to_route_recipients(route, db, text)
 
 
 async def _send_no_changes_message(route: TrackedRoute, db: Session, flights_count: int, filtered_count: int, best_flight: dict | None):
+    await _add_telegram_partner_link(best_flight, "telegram_status")
     text = build_no_changes_text(route, flights_count, filtered_count, best_flight)
     return await _send_to_route_recipients(route, db, text)
 
@@ -243,6 +273,8 @@ async def _check_roundtrip(route: TrackedRoute, db: Session):
     return_route = _return_leg_route(route)
     outbound_flights = await search_prices(route)
     return_flights = await search_prices(return_route)
+    await _add_website_partner_links(outbound_flights)
+    await _add_website_partner_links(return_flights)
     outbound = apply_filters(outbound_flights, route, enforce_price=False)
     inbound = apply_filters(return_flights, return_route, enforce_price=False)
     best = _best_roundtrip(outbound, inbound, yandex_url)
@@ -261,6 +293,7 @@ async def _check_roundtrip(route: TrackedRoute, db: Session):
         db.flush()
         stored_keys.add(_flight_key(best))
         if matches and _should_notify(route, best, db):
+            await _add_telegram_partner_link(best, "telegram_alert")
             text = build_notification_text(route, best)
             sent = await _send_to_route_recipients(route, db, text)
             if sent:
@@ -276,6 +309,7 @@ async def _check_roundtrip(route: TrackedRoute, db: Session):
 
 async def _check_oneway(route: TrackedRoute, db: Session):
     flights = await search_prices(route)
+    await _add_website_partner_links(flights)
     filtered = apply_filters(flights, route, enforce_price=True)
     comparable = apply_filters(flights, route, enforce_price=False)
     best_flight = min(filtered, key=lambda f: f.get("price", 10**12)) if filtered else None
@@ -296,6 +330,7 @@ async def _check_oneway(route: TrackedRoute, db: Session):
         db.flush()
         stored_keys.add(_flight_key(flight))
         if _should_notify(route, flight, db):
+            await _add_telegram_partner_link(flight, "telegram_alert")
             text = build_notification_text(route, flight)
             sent = await _send_to_route_recipients(route, db, text)
             if sent:

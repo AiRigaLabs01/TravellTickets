@@ -51,6 +51,13 @@ def _append_yandex_link(lines: list[str], yandex_url: str | None):
         lines.append(f"🔗 <a href='{yandex_url}'>Проверить на Яндекс Путешествиях</a>")
 
 
+def _append_aviasales_link(lines: list[str], flight: dict):
+    aviasales_url = flight.get("telegram_aviasales_url") or flight.get("aviasales_url")
+    if aviasales_url:
+        lines.append("")
+        lines.append(f"✈️ <a href='{aviasales_url}'>Посмотреть билет на Aviasales</a>")
+
+
 def _seller_line(flight: dict) -> str:
     return f"🏷 Продавец: {flight.get('gate') or '—'}"
 
@@ -80,6 +87,7 @@ def build_notification_text(route: Any, flight: dict) -> str:
         lines.extend(_leg_lines("Туда", flight))
         lines.append("")
         lines.extend(_leg_lines("Обратно", return_flight))
+        _append_aviasales_link(lines, flight)
         _append_yandex_link(lines, flight.get("yandex_travel_url"))
         lines.append("\n<i>⚠️ Цена туда-обратно рассчитана как сумма двух отдельных плеч из кэша Aviasales. Финальную цену и тариф проверяйте у продавца.</i>")
         return "\n".join(lines)
@@ -106,6 +114,7 @@ def build_notification_text(route: Any, flight: dict) -> str:
     lines.append(f"🔀 Пересадки: {transfers_str}")
     lines.append(_seller_line(flight))
 
+    _append_aviasales_link(lines, flight)
     _append_yandex_link(lines, flight.get("yandex_travel_url"))
     lines.append("\n<i>⚠️ Цены из кэша Aviasales — уточняйте актуальную цену у продавца перед покупкой.</i>")
     return "\n".join(lines)
@@ -154,6 +163,7 @@ def build_no_changes_text(route: Any, flights_count: int, filtered_count: int, b
     if best_flight:
         lines.append("")
         lines.extend(_best_flight_lines(route, best_flight))
+        _append_aviasales_link(lines, best_flight)
         _append_yandex_link(lines, best_flight.get("yandex_travel_url"))
     else:
         lines.append("Подходящих билетов по условиям не найдено.")
@@ -181,6 +191,7 @@ def build_debug_monitoring_text(route: Any, flights_count: int, filtered_count: 
         if best_flight:
             lines.append("")
             lines.extend(_best_flight_lines(route, best_flight))
+            _append_aviasales_link(lines, best_flight)
             _append_yandex_link(lines, best_flight.get("yandex_travel_url"))
         else:
             lines.append("Подходящих билетов по условиям не найдено.")
