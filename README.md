@@ -30,7 +30,37 @@
 
 ---
 
-## Переменные окружения (Replit Secrets)
+## Конфигурация и безопасная подготовка релиза
+
+Шаблон переменных без секретных значений: [.env.example](.env.example).
+Реальные `.env`, SSH-ключи, TLS-ключи и токены не добавляются в Git или Docker context.
+Не копируйте production-конфигурацию в тестовое окружение.
+
+Разработка: `codex/*` -> PR в `develop` -> отдельный release-PR в `main`.
+CI проверяет PR и push в `develop`/`main`: lint, tests, focused secret scan,
+сборку контейнера и HTTP smoke-test. Mypy пока информационный, не блокирующий.
+
+Локальные проверки (Python 3.11, Poetry 2.4.1):
+
+```console
+poetry check --lock
+poetry install --no-root
+poetry run flake8 -j 1 app tests scripts/check_secrets.py
+poetry run pytest
+poetry run python scripts/check_secrets.py --history
+docker build -t travelltickets:verify .
+```
+
+Тесты отключают загрузку `.env` и очищают ключи интеграций; данные тестов хранятся
+в SQLite в памяти. Контейнер устанавливает основные зависимости из `poetry.lock`.
+`uv.lock` поддерживается для совместимости; источником release-зависимостей остаётся
+`poetry.lock`. `requirements.txt` использует объявления из `pyproject.toml` без копии списка.
+CI не публикует образ и не выполняет деплой.
+
+Порядок будущей передачи деплоя, аудит доступов и обязательные проверки:
+[docs/PLATFORM_HANDOFF.md](docs/PLATFORM_HANDOFF.md).
+
+## Переменные окружения
 
 | Переменная | Описание |
 |---|---|

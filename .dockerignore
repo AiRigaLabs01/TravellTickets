@@ -1,0 +1,14 @@
+# Only application/build inputs belong in the Docker context.
+**
+!Dockerfile
+!pyproject.toml
+!poetry.lock
+!app/
+!app/**
+!data/
+!data/**
+**/__pycache__/
+**/*.pyc
+**/.env
+**/*.pem
+**/*.key

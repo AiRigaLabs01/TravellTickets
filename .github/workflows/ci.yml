@@ -4,11 +4,23 @@ on:
   pull_request:
   push:
     branches:
-      - feature/travell_bot02
+      - develop
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHON_DOTENV_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -16,12 +28,51 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip poetry
-          poetry install
+          python -m pip install poetry==2.4.1
+          poetry check --lock
+          poetry install --no-root --no-interaction
       - name: Lint
-        run: poetry run flake8 -j 1 app tests
+        run: poetry run flake8 -j 1 app tests scripts/check_secrets.py
       - name: Type check
         run: poetry run mypy app
         continue-on-error: true
       - name: Tests
         run: poetry run pytest
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Scan tracked files and reachable history (redacted)
+        run: python scripts/check_secrets.py --history
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build application image
+        run: docker build -t travelltickets:ci .
+      - name: Verify startup and HTTP routes without production credentials
+        run: |
+          docker run -d --name travelltickets-ci -p 127.0.0.1:5000:5000 \
+            -e PYTHON_DOTENV_DISABLED=1 \
+            -e DATABASE_URL=sqlite:////tmp/smoke.db \
+            -e TELEGRAM_BOT_TOKEN= \
+            -e TRAVELPAYOUTS_TOKEN= \
+            travelltickets:ci
+          curl --fail --retry 15 --retry-delay 2 --retry-all-errors \
+            http://127.0.0.1:5000/healthz
+          curl --fail http://127.0.0.1:5000/ > /dev/null
+          curl --fail http://127.0.0.1:5000/login > /dev/null
+      - name: Container diagnostics and cleanup
+        if: always()
+        run: |
+          docker logs travelltickets-ci || true
+          docker rm -f travelltickets-ci || true

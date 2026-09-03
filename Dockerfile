@@ -10,12 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN printf 'precedence ::ffff:0:0/96  100\n' >> /etc/gai.conf
 
-COPY pyproject.toml ./
+COPY pyproject.toml poetry.lock ./
+RUN pip install --no-cache-dir poetry==2.4.1 \
+    && POETRY_VIRTUALENVS_CREATE=false poetry install --only main --no-root --no-interaction
+
 COPY app ./app
 COPY data ./data
-
-RUN pip install --upgrade pip
-RUN pip install .
 
 EXPOSE 5000
 
