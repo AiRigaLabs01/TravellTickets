@@ -73,13 +73,15 @@ def _is_public_path(path: str) -> bool:
 
 
 def _allows_partner_script(path: str) -> bool:
-    return path == "/" or path.startswith(("/public", "/tg/"))
+    return path in ("/", "/public")
 
 
 def _add_security_headers(response: Response, path: str) -> Response:
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("Referrer-Policy", "no-referrer-when-downgrade")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    if path.startswith("/tg/"):
+        response.headers["Cache-Control"] = "no-store"
     response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
     allow_partner = _allows_partner_script(path)
     script_src = "'self' 'unsafe-inline' https://emrldco.com" if allow_partner else "'self'"

@@ -11,18 +11,18 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup
-from sqlalchemy import or_
 
 from app.city_codes import city_label, resolve_iata
 from app.config import APP_BASE_URL, TELEGRAM_BOT_TOKEN
 from app.database import SessionLocal
 from app.date_utils import format_msk_time, format_route_date, format_route_date_long, parse_route_date
-from app.auth import create_telegram_access_token, normalize_telegram_username
+from app.auth import create_telegram_access_token
 from app.models import Notification, PriceCheck, TrackedRoute
 from app.scheduler import check_route, schedule_route, unschedule_route
 from app.services.locations import location_choices as service_location_choices
 from app.services.locations import resolve_location_code, resolve_route_location, should_offer_location_choices as service_should_offer_location_choices
 from app.services.routes import delete_route as delete_route_service
+from app.repositories import RouteRepository
 from app.yandex_links import build_yandex_travel_url_for_route
 
 logger = logging.getLogger(__name__)
@@ -135,19 +135,11 @@ def public_app_url() -> bool:
 
 
 def owned_routes(db, message: Message):
-    username = normalize_telegram_username(creator_username(message))
-    filters = [TrackedRoute.telegram_chat_id == chat_id(message)]
-    if username:
-        filters.extend([TrackedRoute.creator_username == username, TrackedRoute.notification_username == username])
-    return db.query(TrackedRoute).filter(TrackedRoute.is_active == True, or_(*filters))
+    return RouteRepository(db).query_for_telegram_payload({"chat_id": chat_id(message)}).filter(TrackedRoute.is_active == True)
 
 
 def owned_route(db, message: Message, route_id: int):
-    username = normalize_telegram_username(creator_username(message))
-    filters = [TrackedRoute.telegram_chat_id == chat_id(message)]
-    if username:
-        filters.extend([TrackedRoute.creator_username == username, TrackedRoute.notification_username == username])
-    return db.query(TrackedRoute).filter(TrackedRoute.id == route_id, or_(*filters)).first()
+    return RouteRepository(db).query_for_telegram_payload({"chat_id": chat_id(message), "route_id": route_id}).first()
 
 
 def route_web_url(route: TrackedRoute, message: Message | None = None) -> str:
