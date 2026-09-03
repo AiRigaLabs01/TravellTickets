@@ -217,10 +217,10 @@ async def send_telegram_notification(chat_id: str, text: str) -> bool:
             if resp.status_code == 200:
                 logger.info(f"Telegram notification sent to {chat_id}")
                 return True
-            logger.error(f"Telegram API error {resp.status_code}: {resp.text[:200]}")
+            logger.error("Telegram API error: HTTP %s", resp.status_code)
             return False
         except Exception as e:
-            logger.warning(f"Failed to send Telegram notification attempt {attempt}: {e}")
+            logger.warning("Failed to send Telegram notification attempt %s: %s", attempt, type(e).__name__)
             if attempt < 3:
                 await asyncio.sleep(2 * attempt)
     return False

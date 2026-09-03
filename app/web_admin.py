@@ -2,6 +2,7 @@ import time
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -23,6 +24,7 @@ from app.auth import (
     verify_password,
 )
 from app.database import SessionLocal, get_db
+from app.config import APP_BASE_URL
 from app.models import TrackedRoute, WebUser
 
 MAX_REQUEST_BYTES = 1024 * 1024
@@ -44,10 +46,26 @@ def problem_response(status_code: int, title: str, detail: str | None = None) ->
 
 
 def _client_key(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
-    host = forwarded or (request.client.host if request.client else "unknown")
+    # Uvicorn applies forwarded headers only for FORWARDED_ALLOW_IPS peers.
+    host = request.client.host if request.client else "unknown"
     path_group = "login" if request.url.path.startswith("/login") else request.url.path.split("/", 3)[1]
     return f"{host}:{path_group}"
+
+
+def _safe_next_url(value: str) -> str:
+    if not value.startswith("/") or value.startswith("//"):
+        return "/"
+    if any(ord(c) < 32 or ord(c) == 127 for c in value) or "\\" in value:
+        return "/"
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return "/"
+    path = unquote(parts.path)
+    if (parts.scheme or parts.netloc or not path.startswith("/") or path.startswith("//")
+            or "\\" in path or "%" in path or any(ord(c) < 32 or ord(c) == 127 for c in path)):
+        return "/"
+    return value
 
 
 def _rate_limited(request: Request) -> bool:
@@ -117,11 +135,16 @@ def install_web_admin(app: FastAPI) -> None:
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        content_length = int(request.headers.get("content-length") or 0)
+        try:
+            content_length = int(request.headers.get("content-length") or 0)
+            if content_length < 0:
+                raise ValueError
+        except ValueError:
+            return _add_security_headers(problem_response(400, "Invalid Content-Length"), request.url.path)
         if content_length > MAX_REQUEST_BYTES:
-            return problem_response(413, "Request Entity Too Large")
+            return _add_security_headers(problem_response(413, "Request Entity Too Large"), request.url.path)
         if _rate_limited(request):
-            return problem_response(429, "Too Many Requests")
+            return _add_security_headers(problem_response(429, "Too Many Requests"), request.url.path)
         if not _is_public_path(request.url.path):
             if not auth_is_configured() or not get_session_user(request):
                 return login_redirect(request)
@@ -148,7 +171,7 @@ def install_web_admin(app: FastAPI) -> None:
 
     @app.get("/login", response_class=HTMLResponse)
     async def login_form(request: Request, next: str = "/"):
-        return templates.TemplateResponse(request, "login.html", {"next_url": next})
+        return templates.TemplateResponse(request, "login.html", {"next_url": _safe_next_url(next)})
 
     @app.post("/login")
     async def login_submit(
@@ -160,12 +183,12 @@ def install_web_admin(app: FastAPI) -> None:
     ):
         user = db.query(WebUser).filter(WebUser.username == username, WebUser.is_active == True).first()
         if auth_is_configured() and user and user.is_admin and verify_password(password, user.password_hash):
-            response = RedirectResponse(next_url if next_url.startswith("/") else "/", status_code=303)
+            response = RedirectResponse(_safe_next_url(next_url), status_code=303)
             response.set_cookie(
                 SESSION_COOKIE_NAME,
                 create_session_cookie(user.username),
                 httponly=True,
-                secure=request.url.scheme == "https",
+                secure=request.url.scheme == "https" or APP_BASE_URL.lower().startswith("https://"),
                 samesite="lax",
                 max_age=60 * 60 * 12,
             )
@@ -173,7 +196,7 @@ def install_web_admin(app: FastAPI) -> None:
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"next_url": next_url, "error": "Неверный логин, пароль или нет прав администратора"},
+            {"next_url": _safe_next_url(next_url), "error": "Неверный логин, пароль или нет прав администратора"},
             status_code=401,
         )
 

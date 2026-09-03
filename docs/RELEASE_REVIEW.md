@@ -34,17 +34,48 @@ Explicit Aviasales/Yandex affiliate links and the public-page script remain.
 - Tokens previously exposed to an external party or logs are not revoked by
   this patch. Agree on expiry/rotation separately if an exposure is confirmed.
 
+## 2026-09-03: HTTP and log hardening
+
+- Login redirects now accept only unambiguous local paths. Regression tests
+  reproduced the external `//host` redirect and header-spoofed login limit bypass.
+- Rate limiting uses the ASGI client address, not raw forwarded headers. Uvicorn
+  processes forwarding only from explicitly trusted peers (`FORWARDED_ALLOW_IPS`).
+- Legacy HAProxy overwrites X-Forwarded-For with the actual socket source and
+  already overwrites X-Forwarded-Proto. If a CDN is added, its trust chain needs
+  a separate reviewed configuration; this config assumes a public-facing edge.
+- Python log handlers redact query strings, recognizable Telegram bot tokens,
+  and configured secret values after formatting (including exception text).
+  If logging handlers are replaced at runtime, reinstall the redaction wrapper.
+  Arbitrary prints/third-party telemetry are not covered. No historical logs
+  were read, modified or claimed safe; existing exposure needs separate review.
+- HAProxy logs method/path/status/timing without query strings or cookies.
+  The `%HP` field is documented in the
+  [HAProxy 2.9 manual](https://docs.haproxy.org/2.9/configuration.html#8.2.6).
+  CI validates the actual config with disposable TLS material and checks that
+  the application's access log does not expose a synthetic query token.
+- Telegram API error logs no longer include raw response bodies or exception
+  messages. HTTPS APP_BASE_URL keeps the login cookie Secure even if forwarding
+  trust has not yet been configured.
+
+### Required operator configuration (not changed by this PR)
+
+Set `FORWARDED_ALLOW_IPS` to exact edge addresses, or a dedicated proxy-only
+network CIDR; never `*` or a shared container network. Restrict application port
+5000 to those peers. The example defaults to loopback only: until configured,
+all users behind an untrusted proxy share its rate-limit bucket, by design.
+Set production APP_BASE_URL to its HTTPS URL. Apply HAProxy changes together
+with the application and preserve these policies in AI_Service_Platform.
+Validate client-IP separation and Secure cookies in an isolated deployment
+before production rollout; no live proxy IPs were inferred or changed here.
+
 ## Remaining release gates
 
 This focused patch is not a completed audit of the whole release. Keep PR #2
 open until the remaining checks are addressed:
 
-- Review URL-bearing logs: Uvicorn/HAProxy access logging of `/tg/?token=...`,
-  HTTPX INFO logging of Telegram API URLs, and raw exception messages. No real
-  credentials were read or production logs inspected during this review.
-- Harden login return URLs (`next_url.startswith('/')` also accepts `//host`)
-  and test rate limiting against attacker-supplied `X-Forwarded-For` headers;
-  document the exact trusted proxy boundary.
+- Accept the HTTP/log hardening PR after CI and review. Separately verify
+  runtime proxy trust and decide whether historical logs require an exposure
+  audit or credential rotation through the approved operator workflow.
 - Verify route edits/reset of cached results, concurrent checks/deletion, and
   backup restoration/first startup against an isolated PostgreSQL copy.
 - Complete release CI/review and image-publication design before platform rollout.

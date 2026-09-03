@@ -71,6 +71,22 @@ jobs:
             http://127.0.0.1:5000/healthz
           curl --fail http://127.0.0.1:5000/ > /dev/null
           curl --fail http://127.0.0.1:5000/login > /dev/null
+          curl --silent --output /dev/null 'http://127.0.0.1:5000/tg/monitorings?token=ci-probe-secret'
+          if docker logs travelltickets-ci 2>&1 | grep -F 'ci-probe-secret'; then
+            echo 'Access log leaked the synthetic query token'
+            exit 1
+          fi
+      - name: Validate legacy HAProxy config with disposable TLS material
+        run: |
+          cert_dir="$RUNNER_TEMP/travelltickets-ci-certs"
+          mkdir -p "$cert_dir"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost \
+            -keyout "$cert_dir/key.pem" -out "$cert_dir/cert.pem" 2>/dev/null
+          python -c 'from pathlib import Path; import sys; p = Path(sys.argv[1]); (p / "www.travelltickets.ru.pem").write_bytes((p / "cert.pem").read_bytes() + (p / "key.pem").read_bytes())' "$cert_dir"
+          docker run --rm --add-host app:127.0.0.1 \
+            -v "$PWD/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro" \
+            -v "$cert_dir:/usr/local/etc/haproxy/certs:ro" \
+            haproxy:2.9-alpine haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
       - name: Container diagnostics and cleanup
         if: always()
         run: |

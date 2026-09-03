@@ -16,6 +16,7 @@ from app.config import TELEGRAM_BOT_TOKEN
 from app.database import get_db, init_db
 from app.date_utils import format_msk_datetime, format_msk_time, format_route_date, parse_route_date
 from app.locations import search_locations
+from app.log_security import install_log_redaction
 from app.models import Notification, PriceCheck, TrackedRoute, WebUser
 from app.auth import find_telegram_chat_id, get_current_web_user, normalize_telegram_username, verify_telegram_access_token
 from app.repositories import RouteRepository
@@ -26,6 +27,7 @@ from app.services.routes import passenger_count, reset_route_results
 from app.web_admin import install_web_admin
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+install_log_redaction()
 logger = logging.getLogger(__name__)
 
 
