@@ -91,9 +91,11 @@ scanning, владельцев, scopes, сроки и возможность о�
 2. Product CI: lint/tests, сборка из lock-файла и startup/HTTP smoke.
    Mypy является блокирующим gate; исключение отсутствующих type metadata
    ограничено внешними импортами `apscheduler.*`.
-3. Настроить отдельную публикацию release-образа в GHCR. Зафиксировать source SHA,
-   digest, результаты проверок и предыдущий digest для rollback. Текущий CI
-   ничего не публикует и не запускает platform rollout.
+3. После merge в `main` отдельный workflow публикует проверенный release-образ
+   в GHCR с тегом `sha-<source SHA>` и OCI labels source/revision. В summary
+   зафиксировать полный digest `ghcr.io/airigalabs01/travelltickets@sha256:...`,
+   результаты CI и предыдущий digest для rollback. PR/develop CI ничего не
+   публикует, а release-workflow намеренно не запускает platform rollout.
 4. В platform-PR согласовать runtime schema, operator placement, env/secret store,
    PostgreSQL role/database, egress, edge/TLS renewal, probes, backup/restore и rollback.
    Пройти `make check` и platform preflight. Наличие записи в registry не равно готовому deploy.
@@ -116,6 +118,7 @@ scanning, владельцев, scopes, сроки и возможность о�
 ## Не выполнено этим PR
 
 - Изменение/ротация GitHub, SSH, Telegram, Travelpayouts или database credentials.
-- Публикация образа, изменение прав/branch protection, merge release-PR.
+- Фактическая публикация образа (произойдёт только после merge release-PR),
+  изменение прав/branch protection, merge release-PR.
 - Изменение текущих правок платформы, перенос production, переключение DNS,
   отправка тестового сообщения пользователям или удаление старого стека.

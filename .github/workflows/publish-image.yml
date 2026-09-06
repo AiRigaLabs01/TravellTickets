@@ -1,0 +1,102 @@
+name: Publish release image
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: publish-image-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0, Node.js 24
+
+      - name: Resolve immutable image reference
+        id: image
+        shell: bash
+        run: |
+          image_name="ghcr.io/${GITHUB_REPOSITORY,,}"
+          image_ref="$image_name:sha-$GITHUB_SHA"
+          echo "name=$image_name" >> "$GITHUB_OUTPUT"
+          echo "ref=$image_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Build release image
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          docker build \
+            --build-arg "VCS_REF=$GITHUB_SHA" \
+            --build-arg "SOURCE_URL=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --tag "$IMAGE_REF" .
+
+      - name: Verify exact release image without production credentials
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          docker run -d --name travelltickets-release -p 127.0.0.1:5000:5000 \
+            -e PYTHON_DOTENV_DISABLED=1 \
+            -e DATABASE_URL=sqlite:////tmp/smoke.db \
+            -e TELEGRAM_BOT_TOKEN= \
+            -e TRAVELPAYOUTS_TOKEN= \
+            "$IMAGE_REF"
+          curl --fail --retry 15 --retry-delay 2 --retry-all-errors \
+            http://127.0.0.1:5000/healthz
+          curl --fail http://127.0.0.1:5000/ > /dev/null
+          curl --fail http://127.0.0.1:5000/login > /dev/null
+          curl --silent --output /dev/null \
+            'http://127.0.0.1:5000/tg/monitorings?token=release-probe-secret'
+          if docker logs travelltickets-release 2>&1 | grep -F 'release-probe-secret'; then
+            echo 'Access log leaked the synthetic query token'
+            exit 1
+          fi
+
+      - name: Log in to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io \
+            --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push SHA-tagged image and record digest
+        id: push
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          docker push "$IMAGE_REF"
+          repo_digest=$(docker image inspect \
+            --format '{{index .RepoDigests 0}}' "$IMAGE_REF")
+          digest="${repo_digest#*@}"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not resolve a valid registry digest" >&2
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "reference=$IMAGE_NAME@$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo '## Published release image'
+            echo
+            echo "- Source commit: \`$GITHUB_SHA\`"
+            echo "- Deploy reference: \`$IMAGE_NAME@$digest\`"
+            echo "- Traceability tag: \`sha-$GITHUB_SHA\`"
+            echo
+            echo 'Production deployment is intentionally not part of this workflow.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Container diagnostics and cleanup
+        if: always()
+        run: |
+          docker logs travelltickets-release || true
+          docker rm -f travelltickets-release || true
+          docker logout ghcr.io || true

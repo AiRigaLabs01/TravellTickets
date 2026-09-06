@@ -119,3 +119,28 @@ migration window.
 The next CI run must finish without a type-check error or Node.js 20 warning.
 
 Production, DNS, credentials and the platform repository were not modified.
+
+## 2026-09-06: immutable release image contract
+
+- `.github/workflows/publish-image.yml` runs only from `main` (including manual
+  dispatch) and uses the repository-scoped `GITHUB_TOKEN` to publish to GHCR.
+- The exact image is smoke-tested before publication without production
+  credentials. It is tagged `sha-<source commit>` and records OCI source and
+  revision labels. No mutable `latest` tag is produced.
+- The workflow records the registry digest in its run summary. The platform must
+  deploy `ghcr.io/airigalabs01/travelltickets@sha256:<digest>`, never the tag.
+- Publication does not connect to a VPS, change DNS, or start a deployment.
+- GitHub artifact attestations are not enabled: for a private repository GitHub
+  requires Enterprise Cloud. Traceability therefore relies on the workflow run,
+  source SHA, OCI labels, SHA tag and registry digest.
+
+Before platform rollout, record the successful publication run, its source SHA,
+the new digest and the previous production digest. Verify a selected image with:
+
+```console
+docker pull ghcr.io/airigalabs01/travelltickets@sha256:<digest>
+docker image inspect ghcr.io/airigalabs01/travelltickets@sha256:<digest>
+```
+
+This change configures future publication. It does not publish an image until
+the release PR reaches `main`; production remains unchanged.
