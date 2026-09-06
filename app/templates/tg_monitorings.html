@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Мои мониторинги — TravellTickets</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav class="navbar">
+  <a class="brand" href="/tg/monitorings?token={{ token }}">✈️ TravellTickets</a>
+  <span class="subtitle">Мои мониторинги</span>
+</nav>
+<div class="container">
+  {% if routes %}
+  <div class="section-header"><h1>Мои мониторинги ({{ routes | length }})</h1></div>
+  {% for route in routes %}
+  {% set last = last_checks.get(route.id) %}
+  <div class="card" style="padding:20px 22px;border-radius:14px">
+    <div class="route-card-header">
+      <div style="flex:1;min-width:240px">
+        <div class="route-title-row">
+          <a href="/tg/route/{{ route.id }}?token={{ token }}" style="font-size:20px">{{ route.origin_city }} → {{ route.dest_city }}</a>
+          {% if route.trip_type == 'roundtrip' %}<span class="badge badge-info">туда-обратно</span>{% else %}<span class="badge badge-info">только туда</span>{% endif %}
+          {% if route.is_active %}<span class="badge badge-active">активен</span>{% else %}<span class="badge badge-inactive">остановлен</span>{% endif %}
+        </div>
+        <div class="route-meta" style="gap:12px">
+          <span>📅 туда {{ route.departure_date | fmt_route_date }}</span>
+          {% if route.return_date %}<span>↩️ обратно {{ route.return_date | fmt_route_date }}</span>{% endif %}
+          <span>💰 лимит {{ route.max_price | fmt_price }}</span>
+          <span>⏱ {{ route.interval_minutes }} мин</span>
+          {% if route.direct_only %}<span>✈️ прямые</span>{% endif %}
+          {% if route.last_checked_at %}<span>🕐 {{ route.last_checked_at | fmt_dt }}</span>{% endif %}
+        </div>
+        <div class="filters-summary">
+          {% if route.destination_airports %}{% for ap in route.destination_airports.split(',') %}<span class="tag">{{ airport_label(ap.strip()) }}</span>{% endfor %}{% endif %}
+          {% if route.airline_codes %}{% for al in route.airline_codes.split(',') %}<span class="tag tag-airline">{{ airline_label(al.strip()) }}</span>{% endfor %}{% endif %}
+        </div>
+      </div>
+      <div class="price-display" style="min-width:150px;background:#f8f9fc;border:1px solid var(--border);border-radius:14px;padding:14px;text-align:center">
+        {% if route.last_best_price %}
+          <div class="price-big">{{ route.last_best_price | fmt_price }}</div><div class="price-max">лучшая подходящая</div>
+        {% elif last %}
+          <div class="price-big" style="color:var(--danger)">{{ last.price | fmt_price }}</div><div class="price-max">последняя найденная</div>
+        {% else %}
+          <div class="price-na">нет данных</div><div class="price-max">проверок ещё нет</div>
+        {% endif %}
+      </div>
+    </div>
+    {% if last %}
+    <hr class="route-divider">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;font-size:13px;background:#fbfcff;border:1px solid var(--border);border-radius:12px;padding:12px">
+      <span><strong>{{ last.airline }} {{ last.flight_number }}</strong></span>
+      <span>{{ last.origin_airport or '—' }} → {{ last.destination_airport or '—' }}</span>
+      <span>💵 {{ last.price | fmt_price }}</span>
+      <span>✈ {{ last.departure_at | fmt_time }}</span>
+      <span>🛬 {{ last.estimated_arrival_at | fmt_time }}</span>
+      <span>🏷 {{ last.gate or '—' }}</span>
+      {% if last.aviasales_url %}<span><a href="{{ last.aviasales_url }}" target="_blank" rel="sponsored noopener">✈️ Aviasales</a></span>{% endif %}
+      {% if last.yandex_travel_url %}<span><a href="{{ last.yandex_travel_url }}" target="_blank" rel="noopener">🔗 Яндекс</a></span>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="empty-state">
+    <div class="icon">🛫</div>
+    <h3>У вас пока нет мониторингов</h3>
+    <p>Создайте мониторинг в Telegram-боте, и он появится здесь.</p>
+  </div>
+  {% endif %}
+  <div class="disclaimer">Ссылка действует 24 часа. Если она перестала открываться, запросите новую в Telegram-боте.</div>
+</div>
+</body>
+</html>

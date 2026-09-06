@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% if route %}Изменить маршрут{% else %}Создать мониторинг{% endif %} — TravellTickets</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav class="navbar"><a class="brand" href="/">✈️ TravellTickets</a><span class="nav-spacer"></span>{% if current_user %}{% if current_user.is_admin %}<a class="nav-link" href="/profile">Администрирование</a>{% else %}<a class="nav-link" href="/profile">{{ current_user.display_name or current_user.username }}</a>{% endif %}<a class="nav-link" href="/logout">Выйти</a>{% endif %}</nav>
+<div class="container-narrow">
+  <div style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
+    <a class="back-link" href="{% if route %}/route/{{ route.id }}{% else %}/{% endif %}">← Назад</a>
+    {% if not route %}<button class="preset-btn" type="button" id="fill_preset_button">💡 Пример: Екатеринбург → Москва</button>{% endif %}
+  </div>
+  <div class="page-header"><h1>{% if route %}Изменить маршрут{% else %}Создать мониторинг билетов{% endif %}</h1></div>
+  {% if errors %}{% for err in errors %}<div class="alert alert-error">{{ err }}</div>{% endfor %}{% endif %}
+
+  <form method="post" action="{% if route %}/route/{{ route.id }}/edit{% else %}/route/new{% endif %}" id="routeForm">
+    <div class="form-block">
+      <div class="form-block-title"><span class="step-num">1</span> Маршрут</div>
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+        {% set rt = route.trip_type if route and route.trip_type else 'oneway' %}
+        <label class="checkbox-pill"><input type="radio" name="trip_type" value="oneway" {% if rt != 'roundtrip' %}checked{% endif %}> Только туда</label>
+        <label class="checkbox-pill"><input type="radio" name="trip_type" value="roundtrip" {% if rt == 'roundtrip' %}checked{% endif %}> Туда-обратно</label>
+      </div>
+      <div class="route-form-grid">
+        <div class="form-group autocomplete-group"><label>Откуда *</label><input type="text" name="origin_input" id="origin_input" value="{{ origin_display }}" placeholder="Введите город или аэропорт" required autocomplete="off"><input type="hidden" name="origin" id="origin_hidden" value="{{ route.origin if route else '' }}"><div class="autocomplete-list" id="origin_suggestions"></div><span class="hint" id="origin_hint">{% if route %}Выбрано: {{ city_label(route.origin) }} / {{ route.origin }}{% else %}Начните вводить: Екатеринбург, Москва, SVX, MOW{% endif %}</span></div>
+        <div class="form-group autocomplete-group"><label>Куда *</label><input type="text" name="destination_input" id="destination_input" value="{{ dest_display }}" placeholder="Введите город или аэропорт" required autocomplete="off"><input type="hidden" name="destination" id="destination_hidden" value="{{ route.destination if route else '' }}"><div class="autocomplete-list" id="destination_suggestions"></div><span class="hint" id="destination_hint">{% if route %}Выбрано: {{ city_label(route.destination) }} / {{ route.destination }}{% else %}Например: Москва, Шереметьево, MOW, SVO{% endif %}</span></div>
+        <div class="form-group"><label>Дата вылета *</label><input type="date" name="departure_date" value="{{ route.departure_date if route else '' }}" required min="{{ today }}"><span class="hint">Туда</span></div>
+        <div class="form-group return-date-field" id="returnDateBlock" style="display:none"><label>Дата обратного вылета *</label><input type="date" name="return_date" value="{{ route.return_date if route and route.return_date else '' }}" min="{{ today }}"><span class="hint">Обратно. Мониторинг проверяет оба плеча, сумма сравнивается с лимитом.</span></div>
+      </div>
+    </div>
+
+    <div class="form-block">
+      <div class="form-block-title"><span class="step-num">2</span> Пассажиры, багаж и цена</div>
+      <div class="form-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="form-group"><label>Взрослые</label><select name="adult_seats"><option value="1" {% if not route or route.adult_seats == 1 %}selected{% endif %}>1</option><option value="2" {% if route and route.adult_seats == 2 %}selected{% endif %}>2</option><option value="3" {% if route and route.adult_seats == 3 %}selected{% endif %}>3</option><option value="4" {% if route and route.adult_seats == 4 %}selected{% endif %}>4</option></select></div>
+        <div class="form-group"><label>Дети</label><select name="children_seats"><option value="0" {% if not route or route.children_seats == 0 %}selected{% endif %}>0</option><option value="1" {% if route and route.children_seats == 1 %}selected{% endif %}>1</option><option value="2" {% if route and route.children_seats == 2 %}selected{% endif %}>2</option></select></div>
+        <div class="form-group"><label>Младенцы</label><select name="infant_seats"><option value="0" {% if not route or route.infant_seats == 0 %}selected{% endif %}>0</option><option value="1" {% if route and route.infant_seats == 1 %}selected{% endif %}>1</option></select></div>
+        <div class="form-group"><label>Багаж</label><label class="checkbox-row" style="margin-top:10px"><input type="checkbox" name="baggage_required" value="true" {% if route and route.baggage_required %}checked{% endif %}><span>Нужен багаж</span></label></div>
+      </div>
+      <div class="form-grid" style="margin-top:12px"><div class="form-group"><label>Максимальная цена (₽) *</label><input type="number" name="max_price" id="max_price" value="{{ route.max_price if route else '' }}" placeholder="5000" min="100" step="100" required><span class="hint">Для туда-обратно лимит сравнивается с суммой двух плеч.</span></div><div class="form-group"><label>Интервал проверки, минут</label><input type="number" name="interval_minutes" id="interval_minutes" value="{{ route.interval_minutes if route else 10 }}" min="1" max="1440" step="1" list="interval_options" required><datalist id="interval_options">{% for value in range(5, 16) %}<option value="{{ value }}"></option>{% endfor %}</datalist><span class="hint">Быстрый выбор: 5–15 мин. Руками можно ввести любое число от 1 до 1440.</span></div></div>
+    </div>
+
+    <div class="form-block">
+      <div class="form-block-title"><span class="step-num">3</span> Фильтры</div>
+      <div class="form-group" style="margin-bottom:16px"><label>Прямые рейсы</label><label class="checkbox-row" style="margin-top:6px"><input type="checkbox" name="direct_only" id="direct_only" value="true" {% if route and route.direct_only %}checked{% endif %}><span>Только прямые рейсы</span></label></div>
+      <div class="form-group" style="margin-bottom:16px"><label>Аэропорты прилёта в Москву</label><div class="checkbox-group" style="margin-top:6px" id="dest_airports_group">{% set sel_airports = (route.destination_airports or '').split(',') | map('trim') | list if route else [] %}<label class="checkbox-pill"><input type="checkbox" name="dest_ap_all" id="dest_ap_all" value="all" {% if not route or not route.destination_airports %}checked{% endif %}>Все аэропорты Москвы</label><label class="checkbox-pill"><input type="checkbox" class="dest-ap-cb" name="dest_ap_SVO" value="SVO" {% if 'SVO' in sel_airports %}checked{% endif %}>Шереметьево</label><label class="checkbox-pill"><input type="checkbox" class="dest-ap-cb" name="dest_ap_VKO" value="VKO" {% if 'VKO' in sel_airports %}checked{% endif %}>Внуково</label><label class="checkbox-pill"><input type="checkbox" class="dest-ap-cb" name="dest_ap_DME" value="DME" {% if 'DME' in sel_airports %}checked{% endif %}>Домодедово</label></div><input type="hidden" name="destination_airports" id="destination_airports" value="{{ route.destination_airports or '' }}"></div>
+      <div class="form-group" style="margin-bottom:16px"><label>Авиакомпании</label><div class="checkbox-group" style="margin-top:6px" id="airlines_group">{% set sel_airlines = (route.airline_codes or '').split(',') | map('trim') | list if route else [] %}<label class="checkbox-pill"><input type="checkbox" name="airline_all" id="airline_all" value="all" {% if not route or not route.airline_codes %}checked{% endif %}>Все авиакомпании</label><label class="checkbox-pill"><input type="checkbox" class="airline-cb" name="al_SU" value="SU" {% if 'SU' in sel_airlines %}checked{% endif %}>Аэрофлот</label><label class="checkbox-pill"><input type="checkbox" class="airline-cb" name="al_DP" value="DP" {% if 'DP' in sel_airlines %}checked{% endif %}>Победа</label><label class="checkbox-pill"><input type="checkbox" class="airline-cb" name="al_S7" value="S7" {% if 'S7' in sel_airlines %}checked{% endif %}>S7</label><label class="checkbox-pill"><input type="checkbox" class="airline-cb" name="al_U6" value="U6" {% if 'U6' in sel_airlines %}checked{% endif %}>Уральские</label></div><input type="hidden" name="airline_codes" id="airline_codes" value="{{ route.airline_codes or '' }}"></div>
+
+      <div class="card" style="padding:16px;margin-top:12px"><h3 style="font-size:16px;margin-bottom:12px">Время вылета и прилёта</h3><div class="form-grid" style="grid-template-columns:1fr 1fr"><div><h4>Туда</h4><div class="range-block"><label>Вылет из {{ city_label(route.origin) if route else 'пункта вылета' }} <span id="depLabel"></span></label><input type="range" id="depFrom" min="0" max="1439" step="15" value="0"><input type="range" id="depTo" min="0" max="1439" step="15" value="1439"><input type="hidden" name="departure_time_from" id="departure_time_from" value="{{ route.departure_time_from or '' }}"><input type="hidden" name="departure_time_to" id="departure_time_to" value="{{ route.departure_time_to or '' }}"></div><div class="range-block"><label>Прибытие <span id="arrLabel"></span></label><input type="range" id="arrFrom" min="0" max="1439" step="15" value="0"><input type="range" id="arrTo" min="0" max="1439" step="15" value="1439"><input type="hidden" name="arrival_time_from" id="arrival_time_from" value="{{ route.arrival_time_from or '' }}"><input type="hidden" name="arrival_time_to" id="arrival_time_to" value="{{ route.arrival_time_to or '' }}"></div></div><div id="returnTimeBlock"><h4>Обратно</h4><div class="range-block"><label>Вылет обратно <span id="rdepLabel"></span></label><input type="range" id="rdepFrom" min="0" max="1439" step="15" value="0"><input type="range" id="rdepTo" min="0" max="1439" step="15" value="1439"><input type="hidden" name="return_departure_time_from" id="return_departure_time_from" value="{{ route.return_departure_time_from or '' }}"><input type="hidden" name="return_departure_time_to" id="return_departure_time_to" value="{{ route.return_departure_time_to or '' }}"></div><div class="range-block"><label>Прибытие обратно <span id="rarrLabel"></span></label><input type="range" id="rarrFrom" min="0" max="1439" step="15" value="0"><input type="range" id="rarrTo" min="0" max="1439" step="15" value="1439"><input type="hidden" name="return_arrival_time_from" id="return_arrival_time_from" value="{{ route.return_arrival_time_from or '' }}"><input type="hidden" name="return_arrival_time_to" id="return_arrival_time_to" value="{{ route.return_arrival_time_to or '' }}"></div></div></div><span class="hint">Если начало позже конца, например 18:00–05:00, мониторинг проверит выбранную дату и раннее утро следующих суток. Для строгой ночи выберите следующую дату и обычный диапазон 00:00–05:00.</span></div>
+    </div>
+
+    <div class="form-block">
+      <div class="form-block-title"><span class="step-num">4</span> Уведомления</div>
+      {% set notify_mode = route.notification_mode if route and route.notification_mode else 'telegram' %}
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+        <label class="checkbox-pill"><input type="radio" name="notification_mode" value="telegram" {% if notify_mode != 'all' %}checked{% endif %}> На Telegram-ник</label>
+        <label class="checkbox-pill"><input type="radio" name="notification_mode" value="all" {% if notify_mode == 'all' %}checked{% endif %}> Всем</label>
+      </div>
+      <div class="form-group" id="notificationUsernameBlock">
+        <label>Telegram username получателя</label>
+        <input type="text" name="notification_username" value="{{ route.notification_username if route and route.notification_username else '' }}" placeholder="username без @">
+        <span class="hint">Ник должен уже быть известен боту: пользователь открыл бота или создавал мониторинг через Telegram.</span>
+      </div>
+      <div class="alert alert-info" style="margin-bottom:0">Уведомления приходят через Telegram-бот <a href="https://t.me/mytravellticketbot" target="_blank" rel="noopener">@mytravellticketbot</a>. Для режима “Всем” отправка идёт по всем известным chat_id.</div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary" type="submit" style="font-size:15px;padding:11px 28px">{% if route %}💾 Сохранить изменения{% else %}🚀 Создать мониторинг{% endif %}</button><a class="btn btn-ghost" href="{% if route %}/route/{{ route.id }}{% else %}/{% endif %}">Отмена</a></div>
+  </form>
+</div>
+
+<script src="/static/route-form.js" defer></script>
+
+</body>
+</html>

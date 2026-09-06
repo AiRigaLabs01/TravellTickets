@@ -216,3 +216,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# TravellTickets local deployment secrets and operator files
+.env
+vps_secrets.txt
+*.pem
+*.key
+.ssh/
+operator/
+__pycache__/
+.tmp/
+pytest-cache-files-*/
+travelltickets.db

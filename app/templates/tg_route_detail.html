@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ route.title or (route.origin ~ " → " ~ route.destination) }} — TravellTickets</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav class="navbar">
+  <a class="brand" href="/tg/monitorings?token={{ token }}">✈️ TravellTickets</a>
+  <span class="subtitle">История мониторинга</span>
+</nav>
+<div class="container">
+  <div style="margin-bottom:16px"><a class="back-link" href="/tg/monitorings?token={{ token }}">← Мои мониторинги</a></div>
+  <div class="card" style="padding:22px;border-radius:14px;margin-bottom:18px">
+    <div class="page-header" style="margin-bottom:0">
+      <div>
+        <h1>{{ route.origin_city }} → {{ route.dest_city }}</h1>
+        <div style="margin-top:6px;font-size:13px;color:var(--muted)">
+          туда {{ route.departure_date | fmt_route_date }}{% if route.return_date %} · обратно {{ route.return_date | fmt_route_date }}{% endif %} · лимит {{ route.max_price | fmt_price }} · каждые {{ route.interval_minutes }} мин
+        </div>
+      </div>
+    </div>
+  </div>
+  {% if route.last_error %}<div class="alert alert-error">⚠️ Последняя ошибка: {{ route.last_error }}</div>{% endif %}
+  <div class="stats-strip">
+    <div class="stat-item"><div class="stat-label">Статус</div>{% if route.is_active %}<span class="badge badge-active">активен</span>{% else %}<span class="badge badge-inactive">остановлен</span>{% endif %}</div>
+    <div class="stat-item"><div class="stat-label">Максимальная цена</div><div style="font-weight:700">{{ route.max_price | fmt_price }}</div></div>
+    <div class="stat-item"><div class="stat-label">Лучшая подходящая</div>{% if checks and route.last_best_price %}<div class="price-big" style="font-size:20px">{{ route.last_best_price | fmt_price }}</div>{% else %}<div class="price-na">нет данных</div>{% endif %}</div>
+    <div class="stat-item"><div class="stat-label">Последняя проверка</div><div>{{ route.last_checked_at | fmt_dt }}</div></div>
+  </div>
+  <div class="section-header"><h2>История проверок</h2></div>
+  {% if checks %}
+    <div class="table-wrap" style="margin-bottom:6px"><table><thead><tr><th>Проверено</th><th>Статус</th><th>Цена</th><th>Рейс</th><th>Продавец</th><th>Аэропорты</th><th>Вылет</th><th>Прилёт</th><th>Ссылки</th></tr></thead><tbody>{% for c in checks %}<tr><td style="white-space:nowrap">{{ c.checked_at | fmt_dt }}</td><td>{% if c.matches_filters %}<span class="badge badge-active">подходит</span>{% else %}<span class="badge badge-error">выше лимита</span>{% endif %}</td><td><strong style="color:{% if c.matches_filters %}var(--success){% else %}var(--danger){% endif %}">{{ c.price | fmt_price }}</strong></td><td style="white-space:nowrap">{{ c.airline }} {{ c.flight_number }}</td><td>{{ c.gate or "—" }}</td><td style="white-space:nowrap">{{ c.origin_airport or "?" }} → {{ c.destination_airport or "?" }}</td><td style="white-space:nowrap">{{ c.departure_at | fmt_time }}</td><td style="white-space:nowrap">{{ c.estimated_arrival_at | fmt_time }}{% if c.is_estimated_arrival %}<span title="Рассчитано по длительности рейса" style="color:var(--muted)">~</span>{% endif %}</td><td style="white-space:nowrap">{% if c.aviasales_url %}<a href="{{ c.aviasales_url }}" target="_blank" rel="sponsored noopener">Aviasales</a>{% endif %}{% if c.aviasales_url and c.yandex_travel_url %} · {% endif %}{% if c.yandex_travel_url %}<a href="{{ c.yandex_travel_url }}" target="_blank" rel="noopener">Яндекс</a>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+  {% else %}
+    <div class="card" style="text-align:center;padding:32px;color:var(--muted)">Проверок ещё не было.</div>
+  {% endif %}
+  <div class="disclaimer" style="margin-top:20px">Ссылка действует 24 часа. Цены могут быть кэшированы Aviasales.</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,1 @@
+"""TravellTickets application package."""
