@@ -127,7 +127,7 @@ jobs:
         run: |
           echo "DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:5432/travelltickets_ci" >> "$GITHUB_ENV"
           DATABASE_URL="postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:5432/travelltickets_ci" \
-            poetry run python scripts/postgres_rehearsal.py seed
+            poetry run python -m scripts.postgres_rehearsal seed
           db_container="${{ job.services.postgres.id }}"
           docker exec "$db_container" pg_dump -U "$POSTGRES_USER" \
             --format=custom --no-owner --no-acl --file=/tmp/travelltickets.dump travelltickets_ci
@@ -140,4 +140,4 @@ jobs:
             --exit-on-error --no-owner --no-acl \
             --dbname=travelltickets_restore_ci /tmp/travelltickets.dump
           DATABASE_URL="postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:5432/travelltickets_restore_ci" \
-            poetry run python scripts/postgres_rehearsal.py verify
+            poetry run python -m scripts.postgres_rehearsal verify
