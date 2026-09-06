@@ -80,6 +80,26 @@ open until the remaining checks are addressed:
   backup restoration/first startup against an isolated PostgreSQL copy.
 - Complete release CI/review and image-publication design before platform rollout.
 
+## PostgreSQL backup/restore rehearsal
+
+CI starts a disposable PostgreSQL 16 service, seeds linked user, route, price
+check and notification records, and creates a native custom-format `pg_dump`.
+It validates the archive, restores it into a second empty database, then checks:
+
+- data values and foreign-key relationships survived;
+- `init_db()` remains idempotent across two starts after restore;
+- PostgreSQL sequences continue without primary-key collisions.
+
+The rehearsal script has an independent fail-closed guard: it runs only with an
+explicit flag, the dedicated CI role, a loopback database host, and one of two
+fixed CI database names. It refuses production-looking and remote URLs. The CI
+credentials and databases are synthetic and ephemeral.
+
+This proves the release backup/restore procedure against generated representative
+data. It does not read production credentials, inspect production data, or replace
+the required production backup and restore verification during the approved
+migration window.
+
 ## 2026-09-06: CI annotations and typing gate
 
 - GitHub-maintained checkout/setup-python actions now use immutable commits for
