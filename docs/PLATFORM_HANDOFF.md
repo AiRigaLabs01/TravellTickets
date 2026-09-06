@@ -89,7 +89,8 @@ scanning, владельцев, scopes, сроки и возможность о�
 1. Merge подготовительного PR в `develop` после CI/review; release-PR в `main`
    охватывает всю накопленную историю продукта, не только affiliate-изменение.
 2. Product CI: lint/tests, сборка из lock-файла и startup/HTTP smoke.
-   Mypy имеет накопленный долг и остаётся advisory; не выдавать его за green gate.
+   Mypy является блокирующим gate; исключение отсутствующих type metadata
+   ограничено внешними импортами `apscheduler.*`.
 3. Настроить отдельную публикацию release-образа в GHCR. Зафиксировать source SHA,
    digest, результаты проверок и предыдущий digest для rollback. Текущий CI
    ничего не публикует и не запускает platform rollout.

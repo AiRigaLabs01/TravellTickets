@@ -5,6 +5,13 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import TypedDict
+
+
+class CityGroup(TypedDict):
+    ru: str
+    airports: list[str]
+    keywords: list[str]
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -42,7 +49,7 @@ def _read_airport_rows() -> list[dict[str, str]]:
         return list(csv.DictReader(stream, delimiter="\t"))
 
 
-def _read_city_groups() -> dict[str, dict[str, object]]:
+def _read_city_groups() -> dict[str, CityGroup]:
     with CITY_GROUPS_PATH.open("r", encoding="utf-8") as stream:
         return json.load(stream)
 
@@ -110,7 +117,7 @@ def _popular(codes: list[str]) -> list[tuple[str, str]]:
 def search_locations(query: str, limit: int = 10) -> list[dict[str, str]]:
     q = _normalise_text(query)
     if not q:
-        matches = get_locations()[:limit]
+        matches = list(get_locations()[:limit])
     else:
         matches = [
             loc for loc in get_locations()

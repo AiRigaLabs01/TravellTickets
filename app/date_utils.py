@@ -51,7 +51,7 @@ def format_route_date_long(value: str | None) -> str:
     return f"{dt.day} {RU_MONTHS_GENITIVE[dt.month]} {dt.year}"
 
 
-def to_msk(value: datetime | None) -> datetime | None:
+def to_msk(value: datetime | str | None) -> datetime | None:
     """Convert datetime to Moscow time. Naive datetimes are treated as UTC/server time."""
     if value is None:
         return None
@@ -66,14 +66,14 @@ def to_msk(value: datetime | None) -> datetime | None:
 
 
 def format_msk_datetime(value: datetime | str | None) -> str:
-    dt = to_msk(value) if not isinstance(value, str) else to_msk(value)
+    dt = to_msk(value)
     if dt is None:
         return value if isinstance(value, str) and value else "—"
     return dt.strftime("%d.%m.%Y %H:%M МСК")
 
 
 def format_msk_time(value: datetime | str | None) -> str:
-    dt = to_msk(value) if not isinstance(value, str) else to_msk(value)
+    dt = to_msk(value)
     if dt is None:
         return value if isinstance(value, str) and value else "—"
     return dt.strftime("%H:%M МСК")

@@ -22,8 +22,8 @@ jobs:
     env:
       PYTHON_DOTENV_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0, Node.js 24
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0, Node.js 24
         with:
           python-version: "3.11"
       - name: Install dependencies
@@ -35,7 +35,6 @@ jobs:
         run: poetry run flake8 -j 1 app tests scripts/check_secrets.py
       - name: Type check
         run: poetry run mypy app
-        continue-on-error: true
       - name: Tests
         run: poetry run pytest
 
@@ -43,10 +42,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0, Node.js 24
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0, Node.js 24
         with:
           python-version: "3.11"
       - name: Scan tracked files and reachable history (redacted)
@@ -56,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0, Node.js 24
       - name: Build application image
         run: docker build -t travelltickets:ci .
       - name: Verify startup and HTTP routes without production credentials

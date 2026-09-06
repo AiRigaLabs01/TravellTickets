@@ -120,8 +120,6 @@ def _tr(request: Request, name: str, context: dict | None = None):
 
 
 def _enrich_route(route: TrackedRoute) -> TrackedRoute:
-    route.origin_city = city_label(route.origin)
-    route.dest_city = city_label(route.destination)
     return route
 
 
@@ -291,6 +289,7 @@ async def route_create(
     notification_mode, notification_username, telegram_chat_id = _resolve_route_notification(db, user, notification_mode, notification_username, errors)
     if errors:
         return _tr(request, "route_form.html", _route_form_context(errors=errors, origin_display=origin, dest_display=destination))
+    assert o is not None and d is not None and iso_date is not None
     display_name = (user.display_name or user.username) if user else "Веб-интерфейс"
     route = TrackedRoute(
         origin=o,
@@ -391,6 +390,7 @@ async def route_edit(
     notification_mode, notification_username, telegram_chat_id = _resolve_route_notification(db, user, notification_mode, notification_username, errors)
     if errors:
         return _tr(request, "route_form.html", _route_form_context(route=route, errors=errors, origin_display=origin, dest_display=destination))
+    assert o is not None and d is not None and iso_date is not None
     changed_core = (o != route.origin or d != route.destination or iso_date != route.departure_date)
     route.origin, route.destination, route.departure_date = o, d, iso_date
     route.return_date = return_iso

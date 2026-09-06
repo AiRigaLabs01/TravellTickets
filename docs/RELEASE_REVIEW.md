@@ -80,4 +80,22 @@ open until the remaining checks are addressed:
   backup restoration/first startup against an isolated PostgreSQL copy.
 - Complete release CI/review and image-publication design before platform rollout.
 
+## 2026-09-06: CI annotations and typing gate
+
+- GitHub-maintained checkout/setup-python actions now use immutable commits for
+  v6 releases backed by Node.js 24. This removes the Node.js 20 deprecation
+  annotations without floating mutable tags.
+- SQLAlchemy models use typed `Mapped` declarations. A PostgreSQL DDL snapshot
+  regression test proves that the typing-only conversion does not alter tables,
+  columns, indexes, constraints or nullability.
+- The 111 application type errors are resolved. `mypy app` is now a blocking CI
+  step; `continue-on-error` was removed. APScheduler 3.x lacks distributed type
+  metadata, so only imports from `apscheduler.*` have a narrow missing-import
+  exception. No application module or error category is globally suppressed.
+- Date helpers now declare the string input they already supported. Telegram
+  handlers accept messages without text, and an unbound route cannot generate
+  a Telegram access link.
+
+The next CI run must finish without a type-check error or Node.js 20 warning.
+
 Production, DNS, credentials and the platform repository were not modified.
