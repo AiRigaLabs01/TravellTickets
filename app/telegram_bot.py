@@ -144,6 +144,8 @@ def owned_route(db, message: Message, route_id: int):
 
 def route_web_url(route: TrackedRoute, message: Message | None = None) -> str:
     link_chat_id = chat_id(message) if message else route.telegram_chat_id
+    if not link_chat_id:
+        raise ValueError("A verified Telegram chat is required for an access link")
     link_username = creator_username(message) if message else route.creator_username
     token = create_telegram_access_token(link_chat_id, link_username, route.id)
     return f"{APP_BASE_URL}/tg/route/{route.id}?token={token}"
@@ -156,7 +158,7 @@ def monitorings_web_url(message: Message) -> str:
 
 def route_actions(route: TrackedRoute, message: Message | None = None) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text="🔎 Проверить сейчас", callback_data=f"check:{route.id}"), InlineKeyboardButton(text="🔗 Яндекс", url=build_yandex_travel_url_for_route(route))]]
-    if public_app_url():
+    if public_app_url() and (message is not None or route.telegram_chat_id):
         rows.append([InlineKeyboardButton(text="📈 История", url=route_web_url(route, message)), InlineKeyboardButton(text="📋 Найденные", callback_data=f"found:{route.id}")])
     else:
         rows.append([InlineKeyboardButton(text="📋 Найденные варианты", callback_data=f"found:{route.id}")])
@@ -190,11 +192,11 @@ def resolve_city(text: str) -> str | None:
     return code.upper() if len(code) == 3 and code.isalpha() else None
 
 
-def location_choices(text: str) -> list[tuple[str, str]]:
+def location_choices(text: str | None) -> list[tuple[str, str]]:
     return service_location_choices(text, limit=6)
 
 
-def location_keyboard(text: str) -> ReplyKeyboardMarkup | None:
+def location_keyboard(text: str | None) -> ReplyKeyboardMarkup | None:
     choices = location_choices(text)
     if not choices:
         return None
@@ -205,11 +207,11 @@ def resolve_location(text: str) -> str | None:
     return resolve_location_code(text)
 
 
-def resolve_route_choice(text: str):
+def resolve_route_choice(text: str | None):
     return resolve_route_location(text)
 
 
-def should_offer_location_choices(text: str) -> bool:
+def should_offer_location_choices(text: str | None) -> bool:
     return service_should_offer_location_choices(text)
 
 
@@ -264,7 +266,7 @@ def parse_time_window(text: str | None) -> tuple[str | None, str | None] | None:
     return result[0], result[1]
 
 
-def parse_passengers(text: str) -> tuple[int, int, int] | None:
+def parse_passengers(text: str | None) -> tuple[int, int, int] | None:
     t = (text or "").strip().lower()
     presets = {
         "1 взрослый": (1, 0, 0), "2 взрослых": (2, 0, 0),
@@ -639,7 +641,7 @@ def register_handlers(dp: Dispatcher):
     @dp.message(NewRouteStates.max_price)
     async def new_price(message: Message, state: FSMContext):
         try:
-            price = float(message.text.strip().replace(" ", ""))
+            price = float((message.text or "").strip().replace(" ", ""))
         except ValueError:
             await message.answer("Введите число, например: 5000")
             return
@@ -659,7 +661,7 @@ def register_handlers(dp: Dispatcher):
 
     @dp.message(NewRouteStates.direct_only)
     async def new_direct(message: Message, state: FSMContext):
-        direct = message.text.strip().lower() in ("да", "yes", "y", "д", "1", "true")
+        direct = (message.text or "").strip().lower() in ("да", "yes", "y", "д", "1", "true")
         await state.update_data(direct_only=direct)
         await state.set_state(NewRouteStates.time_window)
         await message.answer(
@@ -797,7 +799,7 @@ def register_handlers(dp: Dispatcher):
     @dp.message(EditRouteStates.price)
     async def edit_price(message: Message, state: FSMContext):
         try:
-            price = float(message.text.strip().replace(" ", ""))
+            price = float((message.text or "").strip().replace(" ", ""))
         except ValueError:
             await message.answer("Введите число, например: 5000")
             return
@@ -954,11 +956,11 @@ def register_handlers(dp: Dispatcher):
 
     @dp.message(Command("stop"))
     async def cmd_stop(message: Message):
-        p = message.text.split(); await stop_route(message, int(p[1])) if len(p) > 1 else await message.answer("Использование: /stop <id>")
+        p = (message.text or "").split(); await stop_route(message, int(p[1])) if len(p) > 1 else await message.answer("Использование: /stop <id>")
 
     @dp.message(Command("delete"))
     async def cmd_delete(message: Message):
-        p = message.text.split(); await delete_route(message, int(p[1])) if len(p) > 1 else await message.answer("Использование: /delete <id>")
+        p = (message.text or "").split(); await delete_route(message, int(p[1])) if len(p) > 1 else await message.answer("Использование: /delete <id>")
 
 
 async def stop_route(message: Message, route_id: int):

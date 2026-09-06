@@ -22,8 +22,8 @@ jobs:
     env:
       PYTHON_DOTENV_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0, Node.js 24
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0, Node.js 24
         with:
           python-version: "3.11"
       - name: Install dependencies
@@ -35,7 +35,6 @@ jobs:
         run: poetry run flake8 -j 1 app tests scripts/check_secrets.py
       - name: Type check
         run: poetry run mypy app
-        continue-on-error: true
       - name: Tests
         run: poetry run pytest
 
@@ -43,10 +42,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0, Node.js 24
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0, Node.js 24
         with:
           python-version: "3.11"
       - name: Scan tracked files and reachable history (redacted)
@@ -56,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0, Node.js 24
       - name: Build application image
         run: docker build -t travelltickets:ci .
       - name: Verify startup and HTTP routes without production credentials
@@ -71,6 +70,22 @@ jobs:
             http://127.0.0.1:5000/healthz
           curl --fail http://127.0.0.1:5000/ > /dev/null
           curl --fail http://127.0.0.1:5000/login > /dev/null
+          curl --silent --output /dev/null 'http://127.0.0.1:5000/tg/monitorings?token=ci-probe-secret'
+          if docker logs travelltickets-ci 2>&1 | grep -F 'ci-probe-secret'; then
+            echo 'Access log leaked the synthetic query token'
+            exit 1
+          fi
+      - name: Validate legacy HAProxy config with disposable TLS material
+        run: |
+          cert_dir="$RUNNER_TEMP/travelltickets-ci-certs"
+          mkdir -p "$cert_dir"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost \
+            -keyout "$cert_dir/key.pem" -out "$cert_dir/cert.pem" 2>/dev/null
+          python -c 'from pathlib import Path; import sys; p = Path(sys.argv[1]); (p / "www.travelltickets.ru.pem").write_bytes((p / "cert.pem").read_bytes() + (p / "key.pem").read_bytes())' "$cert_dir"
+          docker run --rm --add-host app:127.0.0.1 \
+            -v "$PWD/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro" \
+            -v "$cert_dir:/usr/local/etc/haproxy/certs:ro" \
+            haproxy:2.9-alpine haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
       - name: Container diagnostics and cleanup
         if: always()
         run: |

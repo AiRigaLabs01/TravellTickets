@@ -38,7 +38,8 @@
 
 Разработка: `codex/*` -> PR в `develop` -> отдельный release-PR в `main`.
 CI проверяет PR и push в `develop`/`main`: lint, tests, focused secret scan,
-сборку контейнера и HTTP smoke-test. Mypy пока информационный, не блокирующий.
+сборку контейнера и HTTP smoke-test. Mypy является блокирующей проверкой;
+для APScheduler 3.x без типовых метаданных разрешены только отсутствующие импорты.
 
 Локальные проверки (Python 3.11, Poetry 2.4.1):
 

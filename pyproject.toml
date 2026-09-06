@@ -35,3 +35,9 @@ norecursedirs = [".venv", ".tmp", "operator", "pytest-cache-files-*"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+# APScheduler 3.x has no py.typed marker or published stubs. Keep this exception
+# limited to that dependency; application type errors remain blocking.
+[[tool.mypy.overrides]]
+module = ["apscheduler.*"]
+ignore_missing_imports = true

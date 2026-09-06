@@ -422,7 +422,7 @@ def unschedule_route(route_id: int):
         logger.info(f"Unscheduled route #{route_id}")
 
 
-def load_all_routes():
+def load_all_routes() -> None:
     db: Session = SessionLocal()
     try:
         routes = db.query(TrackedRoute).filter(TrackedRoute.is_active == True).all()

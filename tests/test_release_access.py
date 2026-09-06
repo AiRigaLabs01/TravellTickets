@@ -13,6 +13,7 @@ from app.main import app
 from app.models import TrackedRoute
 from app.repositories import RouteRepository
 from app.telegram_bot import owned_route, owned_routes
+from app.telegram_bot import route_actions, route_web_url
 
 
 @pytest.fixture
@@ -86,3 +87,13 @@ def test_route_scoped_token_cannot_expand_access_through_list_page(routes_db):
 def test_legacy_proxy_does_not_override_private_referrer_policy():
     config = Path("haproxy/haproxy.cfg").read_text()
     assert "http-response set-header Referrer-Policy no-referrer\n" in config
+
+
+def test_unbound_route_cannot_receive_telegram_access_link(monkeypatch):
+    import app.telegram_bot as bot
+
+    monkeypatch.setattr(bot, "APP_BASE_URL", "https://tickets.example")
+    route = TrackedRoute(id=5, origin="MOW", destination="UFA", telegram_chat_id=None)
+    with pytest.raises(ValueError, match="verified Telegram chat"):
+        route_web_url(route)
+    assert all(button.text != "📈 История" for row in route_actions(route).inline_keyboard for button in row)
