@@ -1,5 +1,11 @@
 FROM python:3.11-slim
 
+ARG VCS_REF=unknown
+ARG SOURCE_URL=https://github.com/AiRigaLabs01/TravellTickets
+
+LABEL org.opencontainers.image.source=$SOURCE_URL \
+      org.opencontainers.image.revision=$VCS_REF
+
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1

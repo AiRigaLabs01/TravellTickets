@@ -56,7 +56,12 @@ docker build -t travelltickets:verify .
 в SQLite в памяти. Контейнер устанавливает основные зависимости из `poetry.lock`.
 `uv.lock` поддерживается для совместимости; источником release-зависимостей остаётся
 `poetry.lock`. `requirements.txt` использует объявления из `pyproject.toml` без копии списка.
-CI не публикует образ и не выполняет деплой.
+Обычный CI не публикует образ и не выполняет деплой. Отдельный workflow
+`Publish release image` запускается только для `main`, проверяет собранный образ
+без production-секретов и публикует его в GHCR с тегом `sha-<commit>`.
+Для развертывания используется зафиксированная ссылка
+`ghcr.io/airigalabs01/travelltickets@sha256:<digest>` из summary запуска;
+автоматического production-деплоя нет.
 
 Порядок будущей передачи деплоя, аудит доступов и обязательные проверки:
 [docs/PLATFORM_HANDOFF.md](docs/PLATFORM_HANDOFF.md).
